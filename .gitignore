@@ -1,0 +1,14 @@
+# Build output
+.build/
+build/
+
+# macOS
+.DS_Store
+*.app
+
+# Swift
+*.swiftpm/
+
+# IDE
+.idea/
+.vscode/
