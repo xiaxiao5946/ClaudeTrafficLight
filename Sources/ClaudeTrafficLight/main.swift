@@ -2,51 +2,39 @@ import SwiftUI
 import AppKit
 
 // ═══════════════════════════════════════════════════════════════════════
-//  ClaudeTrafficLight — SwiftUI MenuBarExtra + Floating Window
+//  ClaudeTrafficLight — NSStatusItem (menu bar) + NSPopover + floating window
 // ═══════════════════════════════════════════════════════════════════════
+
+let sharedMonitor = SessionMonitor()
 
 @main
 struct ClaudeTrafficLightApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject var monitor = SessionMonitor()
 
     var body: some Scene {
-        // ── Menu Bar Icon (MenuBarExtra — Apple recommended API) ──
-        MenuBarExtra {
-            MenuBarPopoverContent(monitor: monitor, onShowFloating: {
-                appDelegate.showFloatingWindow()
-            })
-        } label: {
-            TrafficLightBarIcon(sessions: monitor.sessions)
-        }
-        .menuBarExtraStyle(.window)
-
-        // ── Floating Window ──
-        Window("Claude Traffic Light", id: "floating-panel") {
-            FloatingWindowContent(monitor: monitor, onToggleMode: {
-                appDelegate.hideFloatingWindow()
-            })
-            .frame(minWidth: 320, minHeight: 400)
-        }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
-        .defaultPosition(.center)
+        Settings { EmptyView() }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  AppDelegate
+//  AppDelegate — owns NSStatusItem, NSPopover, and floating NSWindow
 // ═══════════════════════════════════════════════════════════════════════
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem!
+    private var popover: NSPopover!
+    private var floatingWindow: NSWindow?
+    private var monitorCancellable: AnyObject?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProcessInfo.processInfo.disableAutomaticTermination("ClaudeTrafficLight running")
-        NSLog("[CTL] ✅ SwiftUI MenuBarExtra version launched")
 
-        // When MenuBarExtra + Window coexist, SwiftUI enters .accessory mode
-        // and the Window Scene doesn't auto-open. Show it with a short delay
-        // to let the Window Scene finish construction.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        buildStatusItem()
+        buildPopover()
+        buildFloatingWindow()
+
+        // Show floating window on launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.showFloatingWindow()
         }
     }
@@ -56,29 +44,146 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    func showFloatingWindow() {
-        for window in NSApp.windows {
-            if window.title == "Claude Traffic Light" {
-                window.makeKeyAndOrderFront(nil)
-            }
+    // MARK: - Status Item (menu bar icon)
+
+    private func buildStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.title = ""
+        statusItem.button?.imagePosition = .imageOnly
+
+        drawStatusIcon()
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusItemClicked)
+
+        // Observe session changes to redraw icon
+        monitorCancellable = NotificationCenter.default.addObserver(
+            forName: .CTLSessionsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.drawStatusIcon()
         }
+    }
+
+    private func drawStatusIcon() {
+        let button = statusItem.button
+        let on = sharedMonitor.sessions.filter { $0.isActive }
+        let hasErr = on.contains { $0.status == .error }
+        let hasThink = on.contains { $0.status == .thinking || $0.status == .blocked }
+        let hasWork = on.contains { $0.status == .working || $0.status == .idle }
+
+        let size = NSSize(width: 30, height: 18)
+        let image = NSImage(size: size)
+        image.isTemplate = false
+
+        image.lockFocus()
+        let dotR: CGFloat = 5
+        let centers = [NSPoint(x: 6, y: 9), NSPoint(x: 15, y: 9), NSPoint(x: 24, y: 9)]
+
+        // Use bright, saturated colors so the icon is visible on any menu bar
+        let onColors: [NSColor] = [
+            NSColor(red: 1.0, green: 0.15, blue: 0.15, alpha: 1.0),   // bright red
+            NSColor(red: 1.0, green: 0.80, blue: 0.00, alpha: 1.0),   // amber/yellow
+            NSColor(red: 0.15, green: 0.85, blue: 0.25, alpha: 1.0),  // bright green
+        ]
+        let offColor = NSColor.systemGray.withAlphaComponent(0.35)
+
+        for (i, center) in centers.enumerated() {
+            let path = NSBezierPath(
+                ovalIn: NSRect(x: center.x - dotR / 2, y: center.y - dotR / 2,
+                               width: dotR, height: dotR)
+            )
+            let on = (i == 0 && hasErr) || (i == 1 && hasThink) || (i == 2 && hasWork)
+            (on ? onColors[i] : offColor).setFill()
+            path.fill()
+        }
+
+        image.unlockFocus()
+        button?.image = image
+    }
+
+    @objc private func statusItemClicked() {
+        guard let button = statusItem.button else { return }
+
+        if popover.isShown {
+            popover.close()
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+
+    // MARK: - Popover
+
+    private func buildPopover() {
+        popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 300, height: 360)
+        popover.contentViewController = NSHostingController(
+            rootView: PopoverContentView(monitor: sharedMonitor, onShowFloating: { [weak self] in
+                self?.popover.close()
+                self?.showFloatingWindow()
+            })
+        )
+    }
+
+    // MARK: - Floating window
+
+    private func buildFloatingWindow() {
+        let content = FloatingWindowContent(
+            monitor: sharedMonitor,
+            onToggleMode: { [weak self] in self?.switchToMenuBarOnly() }
+        )
+        let hosting = NSHostingView(rootView: content)
+        hosting.frame.size = hosting.fittingSize
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 480),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Claude Traffic Light"
+        window.titlebarAppearsTransparent = true
+        window.center()
+        window.setFrameAutosaveName("ClaudeTrafficLightFloating")
+        window.contentView = hosting
+        window.isReleasedWhenClosed = false
+
+        floatingWindow = window
+    }
+
+    func showFloatingWindow() {
+        if NSApp.activationPolicy() == .accessory {
+            NSApp.setActivationPolicy(.regular)
+        }
+        floatingWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func hideFloatingWindow() {
-        for window in NSApp.windows {
-            if window.title == "Claude Traffic Light" {
-                window.orderOut(nil)
-            }
-        }
+    private func hideFloatingWindow() {
+        floatingWindow?.orderOut(nil)
+    }
+
+    func switchToMenuBarOnly() {
+        hideFloatingWindow()
+        NSApp.setActivationPolicy(.accessory)
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Menu Bar Popover Content
+//  Notification for session changes (so AppDelegate can redraw icon)
 // ═══════════════════════════════════════════════════════════════════════
 
-struct MenuBarPopoverContent: View {
+extension Notification.Name {
+    static let CTLSessionsChanged = Notification.Name("CTLSessionsChanged")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Popover Content (displayed when clicking the menu bar icon)
+// ═══════════════════════════════════════════════════════════════════════
+
+struct PopoverContentView: View {
     @ObservedObject var monitor: SessionMonitor
     var onShowFloating: () -> Void
 

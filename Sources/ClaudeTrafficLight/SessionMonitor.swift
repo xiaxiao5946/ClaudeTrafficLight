@@ -33,6 +33,7 @@ class SessionMonitor: ObservableObject {
                 if self.selectedSessionId == nil, let first = updated.first {
                     self.selectedSessionId = first.id
                 }
+                NotificationCenter.default.post(name: .CTLSessionsChanged, object: nil)
             }
         }
     }
