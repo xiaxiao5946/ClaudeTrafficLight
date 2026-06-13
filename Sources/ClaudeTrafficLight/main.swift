@@ -7,12 +7,17 @@ import AppKit
 
 let sharedMonitor = SessionMonitor()
 
-@main
-struct ClaudeTrafficLightApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+// ═══════════════════════════════════════════════════════════════════════
+//  Main entry point
+// ═══════════════════════════════════════════════════════════════════════
 
-    var body: some Scene {
-        Settings { EmptyView() }
+@main
+struct MainApp {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
     }
 }
 
@@ -48,58 +53,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = ""
-        statusItem.button?.imagePosition = .imageOnly
+        guard let button = statusItem.button else {
+            NSLog("[CTL] ❌ statusItem.button is nil!")
+            return
+        }
+        // Use a visible icon: SF Symbol + colored dot text
+        if let sfIcon = NSImage(systemSymbolName: "circlebadge.fill",
+                                accessibilityDescription: nil) {
+            sfIcon.isTemplate = true  // adapts to light/dark menu bar
+            button.image = sfIcon
+        }
+        button.imagePosition = .imageLeading
+        button.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        button.target = self
+        button.action = #selector(statusItemClicked)
+        NSLog("[CTL] ✅ statusItem created, button=\(button), image=\(button.image != nil ? "yes" : "no")")
 
-        drawStatusIcon()
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(statusItemClicked)
+        updateStatusTitle()
 
-        // Observe session changes to redraw icon
+        // Observe session changes to update the title color
         monitorCancellable = NotificationCenter.default.addObserver(
             forName: .CTLSessionsChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.drawStatusIcon()
+            self?.updateStatusTitle()
         }
     }
 
-    private func drawStatusIcon() {
-        let button = statusItem.button
+    private func updateStatusTitle() {
         let on = sharedMonitor.sessions.filter { $0.isActive }
         let hasErr = on.contains { $0.status == .error }
         let hasThink = on.contains { $0.status == .thinking || $0.status == .blocked }
         let hasWork = on.contains { $0.status == .working || $0.status == .idle }
 
-        let size = NSSize(width: 30, height: 18)
-        let image = NSImage(size: size)
-        image.isTemplate = false
+        // Update the button title as colored dots
+        let attr = NSMutableAttributedString(string: "●●●")
+        attr.addAttribute(.foregroundColor, value: hasErr ? NSColor.systemRed : NSColor.tertiaryLabelColor, range: NSRange(location: 0, length: 1))
+        attr.addAttribute(.foregroundColor, value: hasThink ? NSColor.systemYellow : NSColor.tertiaryLabelColor, range: NSRange(location: 1, length: 1))
+        attr.addAttribute(.foregroundColor, value: hasWork ? NSColor.systemGreen : NSColor.tertiaryLabelColor, range: NSRange(location: 2, length: 1))
+        attr.addAttribute(.font, value: NSFont.systemFont(ofSize: 10), range: NSRange(location: 0, length: 3))
 
-        image.lockFocus()
-        let dotR: CGFloat = 5
-        let centers = [NSPoint(x: 6, y: 9), NSPoint(x: 15, y: 9), NSPoint(x: 24, y: 9)]
-
-        // Use bright, saturated colors so the icon is visible on any menu bar
-        let onColors: [NSColor] = [
-            NSColor(red: 1.0, green: 0.15, blue: 0.15, alpha: 1.0),   // bright red
-            NSColor(red: 1.0, green: 0.80, blue: 0.00, alpha: 1.0),   // amber/yellow
-            NSColor(red: 0.15, green: 0.85, blue: 0.25, alpha: 1.0),  // bright green
-        ]
-        let offColor = NSColor.systemGray.withAlphaComponent(0.35)
-
-        for (i, center) in centers.enumerated() {
-            let path = NSBezierPath(
-                ovalIn: NSRect(x: center.x - dotR / 2, y: center.y - dotR / 2,
-                               width: dotR, height: dotR)
-            )
-            let on = (i == 0 && hasErr) || (i == 1 && hasThink) || (i == 2 && hasWork)
-            (on ? onColors[i] : offColor).setFill()
-            path.fill()
-        }
-
-        image.unlockFocus()
-        button?.image = image
+        statusItem.button?.attributedTitle = attr
+        NSLog("[CTL] icon update: err=\(hasErr) think=\(hasThink) work=\(hasWork) sessions=\(sharedMonitor.sessions.count)")
     }
 
     @objc private func statusItemClicked() {
