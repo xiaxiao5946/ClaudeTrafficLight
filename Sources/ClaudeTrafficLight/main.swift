@@ -12,10 +12,12 @@ struct ClaudeTrafficLightApp: App {
 
     var body: some Scene {
         // ── Menu Bar Icon (MenuBarExtra — Apple recommended API) ──
-        MenuBarExtra("Claude Traffic Light", systemImage: "circle.fill") {
+        MenuBarExtra {
             MenuBarPopoverContent(monitor: monitor, onShowFloating: {
                 appDelegate.showFloatingWindow()
             })
+        } label: {
+            TrafficLightBarIcon(sessions: monitor.sessions)
         }
         .menuBarExtraStyle(.window)
 
@@ -40,6 +42,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProcessInfo.processInfo.disableAutomaticTermination("ClaudeTrafficLight running")
         NSLog("[CTL] ✅ SwiftUI MenuBarExtra version launched")
+
+        // When MenuBarExtra + Window coexist, SwiftUI enters .accessory mode
+        // and the Window Scene doesn't auto-open. Show it with a short delay
+        // to let the Window Scene finish construction.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.showFloatingWindow()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

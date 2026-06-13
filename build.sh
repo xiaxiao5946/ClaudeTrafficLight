@@ -9,6 +9,7 @@ rm -f build/ClaudeTrafficLight
 
 # Compile all Swift source files together
 swiftc \
+  -parse-as-library \
   -o build/ClaudeTrafficLight \
   -target arm64-apple-macosx13.0 \
   -framework SwiftUI \
@@ -16,6 +17,10 @@ swiftc \
   -framework Foundation \
   Sources/ClaudeTrafficLight/Models.swift \
   Sources/ClaudeTrafficLight/SessionMonitor.swift \
+  Sources/ClaudeTrafficLight/TrafficLightIcon.swift \
+  Sources/ClaudeTrafficLight/PopoverView.swift \
+  Sources/ClaudeTrafficLight/SessionRow.swift \
+  Sources/ClaudeTrafficLight/SessionDetailView.swift \
   Sources/ClaudeTrafficLight/main.swift \
   2>&1 | grep -v "warning:" || true
 
@@ -44,6 +49,8 @@ cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSUIElement</key>
     <true/>
 </dict>
 </plist>
