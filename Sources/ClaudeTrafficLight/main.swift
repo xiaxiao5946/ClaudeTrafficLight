@@ -282,12 +282,15 @@ struct FloatingWindowView: View {
             .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
             .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { n in
                 if isCollapsed { expand() }
-                if let sid = n.userInfo?["sessionId"] as? String, !sid.isEmpty {
+                // Auto-expand the specific session that triggered the event
+                if gAutoExpandEnabled, let sid = n.userInfo?["sessionId"] as? String, !sid.isEmpty {
                     monitor.expandSession(sid)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
                 isCollapsed = true
+                monitor.expandedSessionIds.removeAll()
+                monitor.objectWillChange.send()
             }
             .onHover { handleHover($0) }
     }
@@ -413,9 +416,13 @@ struct FloatingWindowView: View {
         guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
               let screen = win.screen else { return }
         isCollapsed = false
+        // Expand all sessions when manually expanding
+        for s in monitor.filteredSessions {
+            monitor.expandedSessionIds.insert(s.id)
+        }
+        monitor.objectWillChange.send()
         resizeWindow(to: contentHeight, width: expandedWidth)
         var frame = win.frame; let sf = screen.visibleFrame
-        // Flush with edge — left side at screen edge
         if frame.minX < sf.midX { frame.origin.x = sf.minX }
         else { frame.origin.x = sf.maxX - expandedWidth }
         win.setFrame(frame, display: true, animate: true)
