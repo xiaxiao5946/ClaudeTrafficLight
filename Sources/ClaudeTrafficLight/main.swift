@@ -259,11 +259,10 @@ struct FloatingWindowView: View {
     @State private var alwaysOnTop = true
     @State private var contentHeight: CGFloat = 120
     @State private var isCollapsed = false
-    @State private var snapEdge: UnitPoint? = nil  // .leading or .trailing
+    @State private var showTooltip = false
 
     private let expandedWidth: CGFloat = 260
     private let collapsedWidth: CGFloat = 52
-    private let snapThreshold: CGFloat = 40
 
     var body: some View {
         mainContent
@@ -271,8 +270,11 @@ struct FloatingWindowView: View {
                 VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
                     .overlay(Color.black.opacity(0.08))
             )
-            .clipShape(RoundedRectangle(cornerRadius: isCollapsed ? 10 : 14))
-            .overlay(strokeBorder)
+            .clipShape(RoundedRectangle(cornerRadius: isCollapsed ? 8 : 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: isCollapsed ? 8 : 14)
+                    .stroke(Color.white.opacity(isCollapsed ? 0.06 : 0.1), lineWidth: 0.5)
+            )
             .padding(4)
             .onAppear { syncWindowLevel(); startSnapMonitor() }
             .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
@@ -289,11 +291,6 @@ struct FloatingWindowView: View {
         Group {
             if isCollapsed { collapsedView } else { expandedView }
         }
-    }
-
-    private var strokeBorder: some View {
-        RoundedRectangle(cornerRadius: isCollapsed ? 10 : 14)
-            .stroke(Color.white.opacity(isCollapsed ? 0.06 : 0.1), lineWidth: 0.5)
     }
 
     private func handleHover(_ inside: Bool) {
@@ -319,146 +316,76 @@ struct FloatingWindowView: View {
         VStack(spacing: 0) {
             if monitor.filteredSessions.isEmpty {
                 VStack(spacing: 6) {
-                    Image(systemName: "circle.dotted")
-                        .font(.system(size: 20))
-                        .foregroundColor(.secondary.opacity(0.4))
-                    Text("No active sessions")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary.opacity(0.6))
-                    Text("Pin a session to always see it here")
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary.opacity(0.4))
-                }
-                .frame(height: 80)
+                    Image(systemName: "circle.dotted").font(.system(size: 20)).foregroundColor(.secondary.opacity(0.4))
+                    Text("No active sessions").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary.opacity(0.6))
+                    Text("Pin a session to always see it here").font(.system(size: 9)).foregroundColor(.secondary.opacity(0.4))
+                }.frame(height: 80)
             } else {
                 let list = monitor.filteredSessions
                 if list.count <= 4 {
-                    // Auto-fit — no scroll needed
                     VStack(spacing: 6) {
-                        ForEach(list) { session in
-                            GlassSessionCard(session: session)
-                        }
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.top, 4)
-                    .padding(.bottom, 4)
+                        ForEach(list) { session in GlassSessionCard(session: session) }
+                    }.padding(.horizontal, 6).padding(.top, 4).padding(.bottom, 4)
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 6) {
-                            ForEach(list) { session in
-                                GlassSessionCard(session: session)
-                            }
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.top, 4)
-                        .padding(.bottom, 4)
-                    }
+                            ForEach(list) { session in GlassSessionCard(session: session) }
+                        }.padding(.horizontal, 6).padding(.top, 4).padding(.bottom, 4)
+                    }.frame(maxHeight: 320)
                 }
             }
-
             HStack(spacing: 6) {
-                Button(action: { monitor.refresh() }) {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                }
-                .buttonStyle(.plain).foregroundColor(.secondary.opacity(0.6))
-
-                Button(action: { alwaysOnTop.toggle() }) {
-                    Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
-                        .font(.system(size: 10))
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(alwaysOnTop ? .orange : .secondary.opacity(0.5))
-
+                Button(action: { monitor.refresh() }) { Image(systemName: "arrow.clockwise").font(.system(size: 10)) }
+                    .buttonStyle(.plain).foregroundColor(.secondary.opacity(0.6))
+                Button(action: { alwaysOnTop.toggle() }) { Image(systemName: alwaysOnTop ? "pin.fill" : "pin").font(.system(size: 10)) }
+                    .buttonStyle(.plain).foregroundColor(alwaysOnTop ? .orange : .secondary.opacity(0.5))
                 Spacer()
-
-                Button(action: { onMenuBarOnly() }) {
-                    Image(systemName: "minus").font(.system(size: 10, weight: .bold))
-                }
-                .buttonStyle(.plain).foregroundColor(.secondary.opacity(0.4))
-            }
-            .padding(.horizontal, 8).padding(.bottom, 6)
+                Button(action: { onMenuBarOnly() }) { Image(systemName: "minus").font(.system(size: 10, weight: .bold)) }
+                    .buttonStyle(.plain).foregroundColor(.secondary.opacity(0.4))
+            }.padding(.horizontal, 8).padding(.bottom, 6)
         }
-        .frame(width: expandedWidth)
-        .frame(height: contentHeight)
-        .background(
-            GeometryReader { geo in
-                Color.clear.preference(key: ContentHeightKey.self,
-                                        value: geo.size.height)
+        .frame(width: expandedWidth).fixedSize(horizontal: true, vertical: true)
+        .background(GeometryReader { geo in
+            Color.clear.onAppear {
+                let h = geo.size.height
+                if abs(h - contentHeight) > 4 { contentHeight = h; resizeWindow(to: h, width: expandedWidth) }
             }
-        )
-        .onPreferenceChange(ContentHeightKey.self) { h in
-            contentHeight = h
-            resizeWindow(to: h, width: expandedWidth)
+        })
+        .onChange(of: monitor.filteredSessions.count) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { contentHeight = 0 }
         }
     }
 
-    // MARK: - Collapsed view (just traffic light strip)
-
-    @State private var showTooltip = false
+    // MARK: - Collapsed view (per-session lights)
 
     private var collapsedView: some View {
-        VStack(spacing: 6) {
-            // Mini traffic light — only light up when actually busy
-            let active = monitor.sessions.filter { $0.isActive }
-            let hasErr = active.contains { $0.status == .error }
-            let hasBlock = active.contains { $0.status == .blocked }
-            let hasThink = active.contains { $0.status == .thinking }
-            let hasWork = active.contains { $0.status == .working }
-            Circle()
-                .fill(hasErr ? Color.red : Color.red.opacity(0.12))
-                .frame(width: 12, height: 12)
-                .shadow(color: hasErr ? .red.opacity(0.7) : .clear, radius: 6)
-            Circle()
-                .fill(hasBlock || hasThink ? Color.yellow : Color.yellow.opacity(0.12))
-                .frame(width: 12, height: 12)
-                .shadow(color: hasBlock || hasThink ? .yellow.opacity(0.7) : .clear, radius: 6)
-            Circle()
-                .fill(hasWork ? Color.green : Color.green.opacity(0.12))
-                .frame(width: 12, height: 12)
-                .shadow(color: hasWork ? .green.opacity(0.7) : .clear, radius: 6)
-
-            // Expand button
-            Button(action: { expand() }) {
-                Image(systemName: "arrowtriangle.forward.fill")
-                    .font(.system(size: 6))
-                    .foregroundColor(.secondary.opacity(0.4))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.vertical, 8).padding(.horizontal, 10)
-        .frame(width: collapsedWidth)
-        .frame(height: contentHeight)
-        .onHover { inside in
-            if inside {
-                NSCursor.resizeLeftRight.push()
+        VStack(spacing: 4) {
+            if monitor.filteredSessions.isEmpty {
+                CollapsedLight(red: false, yellow: false, green: false)
             } else {
-                NSCursor.pop()
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { expand() }
-        .onHover { showTooltip = $0 }
-        .overlay(alignment: .leading) {
-            if showTooltip && !monitor.filteredSessions.isEmpty {
-                let tip = monitor.filteredSessions.map { "\($0.status.emoji) \($0.displayTitle)" }.joined(separator: "\n")
-                Text(tip)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.black.opacity(0.85))
+                ForEach(monitor.filteredSessions) { session in
+                    CollapsedLight(
+                        red: session.status == .error,
+                        yellow: session.status == .thinking || session.status == .blocked,
+                        green: session.status == .working
                     )
-                    .offset(x: collapsedWidth + 4)
-                    .fixedSize()
+                }
             }
+            Button(action: { expand() }) {
+                Image(systemName: "arrowtriangle.forward.fill").font(.system(size: 5)).foregroundColor(.secondary.opacity(0.3))
+            }.buttonStyle(.plain)
         }
+        .padding(.vertical, 6).padding(.horizontal, 6).frame(width: collapsedWidth)
+        .onHover { inside in
+            if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            showTooltip = inside
+        }
+        .contentShape(Rectangle()).onTapGesture(count: 2) { expand() }
     }
 
     // MARK: - Snap monitor
 
     private func startSnapMonitor() {
-        // Use a single shared observer (setup once)
         if windowSnapTimer == nil {
             windowSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
                 DispatchQueue.main.async {
@@ -469,28 +396,18 @@ struct FloatingWindowView: View {
         }
     }
 
-    // MARK: - Expand / resize helpers
+    // MARK: - Expand / resize
 
     private func expand() {
         guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
               let screen = win.screen else { return }
-
         isCollapsed = false
-        snapEdge = nil
         resizeWindow(to: contentHeight, width: expandedWidth)
-
-        var frame = win.frame
-        let screenFrame = screen.visibleFrame
-        // 60px from edge — well past the 40px snap threshold
-        if frame.minX < screenFrame.midX {
-            frame.origin.x = screenFrame.minX + 60
-        } else {
-            frame.origin.x = screenFrame.maxX - expandedWidth - 60
-        }
-        frame.origin.y = screenFrame.midY - frame.height / 2
+        var frame = win.frame; let sf = screen.visibleFrame
+        if frame.minX < sf.midX { frame.origin.x = sf.minX + 60 }
+        else { frame.origin.x = sf.maxX - expandedWidth - 60 }
+        frame.origin.y = sf.midY - frame.height / 2
         win.setFrame(frame, display: true, animate: true)
-
-        // Prevent immediate re-snap
         windowLastMoveTime = Date()
     }
 
@@ -499,8 +416,7 @@ struct FloatingWindowView: View {
         let targetH = max(60, min(500, height + 8))
         var frame = win.frame
         frame.origin.y += frame.height - targetH
-        frame.size.height = targetH
-        frame.size.width = width
+        frame.size = NSSize(width: width, height: targetH)
         win.setFrame(frame, display: true, animate: !isCollapsed)
     }
 
@@ -509,6 +425,23 @@ struct FloatingWindowView: View {
         win.level = alwaysOnTop ? .floating : .normal
     }
 }
+
+// MARK: - Collapsed per-session light strip
+
+struct CollapsedLight: View {
+    let red: Bool, yellow: Bool, green: Bool
+    var body: some View {
+        HStack(spacing: 3) {
+            Circle().fill(red ? Color.red : Color.red.opacity(0.12)).frame(width: 8, height: 8)
+                .shadow(color: red ? .red.opacity(0.6) : .clear, radius: 4)
+            Circle().fill(yellow ? Color.yellow : Color.yellow.opacity(0.12)).frame(width: 8, height: 8)
+                .shadow(color: yellow ? .yellow.opacity(0.6) : .clear, radius: 4)
+            Circle().fill(green ? Color.green : Color.green.opacity(0.12)).frame(width: 8, height: 8)
+                .shadow(color: green ? .green.opacity(0.6) : .clear, radius: 4)
+        }
+    }
+}
+
 
 // Global snap state (survives view re-renders)
 private var windowLastMoveTime: Date = .distantPast
