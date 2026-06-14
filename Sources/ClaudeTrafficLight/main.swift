@@ -107,13 +107,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hosting.frame.size = hosting.fittingSize
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 380),
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 360),
             styleMask: [.closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         window.title = "Claude Traffic Light"
-        window.titlebarAppearsTransparent = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.isMovableByWindowBackground = true
+        window.hasShadow = true
+        window.level = .floating  // default to floating
         window.center()
         window.setFrameAutosaveName("CTLFloating")
         window.contentView = hosting
@@ -214,61 +217,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 struct FloatingWindowView: View {
     @ObservedObject var monitor: SessionMonitor
     var onMenuBarOnly: () -> Void
-    @State private var alwaysOnTop = false
+    @State private var alwaysOnTop = true  // default ON since window starts floating
 
     var body: some View {
         VStack(spacing: 0) {
-            // ── Drag handle (no title bar) ──
-            HStack {
+            // ── Session cards ──
+            ScrollView {
+                LazyVStack(spacing: 6) {
+                    ForEach(monitor.filteredSessions) { session in
+                        GlassSessionCard(session: session)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.top, 4)
+                .padding(.bottom, 4)
+            }
+
+            // ── Bottom bar ──
+            HStack(spacing: 6) {
+                Button(action: { monitor.refresh() }) {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                }
+                .buttonStyle(.plain).foregroundColor(.secondary.opacity(0.6))
+
+                Button(action: { alwaysOnTop.toggle() }) {
+                    Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(alwaysOnTop ? .orange : .secondary.opacity(0.5))
+
                 Spacer()
+
                 Button(action: { onMenuBarOnly() }) {
                     Image(systemName: "minus").font(.system(size: 10, weight: .bold))
                 }
-                .buttonStyle(.plain).foregroundColor(.secondary.opacity(0.5))
-                .help("Minimize to menu bar")
+                .buttonStyle(.plain).foregroundColor(.secondary.opacity(0.4))
             }
-            .padding(.horizontal, 8).padding(.top, 6)
-
-            // ── Session cards ──
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(monitor.filteredSessions) { session in
-                        CompactSessionCard(session: session)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 6)
-            }
-
-            Divider()
-
-            // ── Bottom bar ──
-            HStack(spacing: 8) {
-                Button(action: { monitor.refresh() }) {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 11))
-                }
-                .buttonStyle(.plain).foregroundColor(.secondary)
-                .help("Refresh")
-
-                Button(action: {
-                    alwaysOnTop.toggle()
-                }) {
-                    Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(alwaysOnTop ? .orange : .secondary)
-                .help(alwaysOnTop ? "Unpin from top" : "Always on top")
-
-                Spacer()
-
-                Button("Quit") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.plain).font(.system(size: 10)).foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 6)
+            .padding(.horizontal, 8).padding(.bottom, 6)
         }
-        .frame(minWidth: 260, maxWidth: 320, minHeight: 200, maxHeight: 500)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 200, maxWidth: 280, minHeight: 120, maxHeight: 500)
+        .background(
+            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                .overlay(Color.black.opacity(0.08))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+        )
+        .padding(4)  // give shadow room
         .onAppear { syncWindowLevel() }
         .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
     }
@@ -279,97 +277,79 @@ struct FloatingWindowView: View {
     }
 }
 
-// MARK: - Compact session card
+// MARK: - Visual Effect (NSVisualEffectView wrapper)
 
-struct CompactSessionCard: View {
+struct VisualEffectView: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = material
+        v.blendingMode = blendingMode
+        v.state = .active
+        return v
+    }
+
+    func updateNSView(_ v: NSVisualEffectView, context: Context) {
+        v.material = material
+        v.blendingMode = blendingMode
+    }
+}
+
+// MARK: - Glass session card (prominent lights, compact)
+
+struct GlassSessionCard: View {
     let session: SessionInfo
 
     var body: some View {
         HStack(spacing: 10) {
-            // ── Big traffic light ──
-            VStack(spacing: 3) {
+            // ── Large traffic light ──
+            VStack(spacing: 4) {
                 Circle()
                     .fill(session.status == .error ? Color.red : Color.red.opacity(0.12))
-                    .frame(width: 14, height: 14)
-                    .shadow(color: session.status == .error ? .red.opacity(0.5) : .clear, radius: 4)
+                    .frame(width: 18, height: 18)
+                    .shadow(color: session.status == .error ? .red.opacity(0.7) : .clear, radius: 8)
                 Circle()
                     .fill((session.status == .thinking || session.status == .blocked) ? Color.yellow : Color.yellow.opacity(0.12))
-                    .frame(width: 14, height: 14)
-                    .shadow(color: (session.status == .thinking || session.status == .blocked) ? .yellow.opacity(0.5) : .clear, radius: 4)
+                    .frame(width: 18, height: 18)
+                    .shadow(color: (session.status == .thinking || session.status == .blocked) ? .yellow.opacity(0.7) : .clear, radius: 8)
                 Circle()
                     .fill((session.status == .working || session.status == .idle) ? Color.green : Color.green.opacity(0.12))
-                    .frame(width: 14, height: 14)
-                    .shadow(color: (session.status == .working || session.status == .idle) ? .green.opacity(0.5) : .clear, radius: 4)
+                    .frame(width: 18, height: 18)
+                    .shadow(color: (session.status == .working || session.status == .idle) ? .green.opacity(0.7) : .clear, radius: 8)
             }
             .padding(6)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.primary.opacity(0.06))
             )
 
-            // ── Info ──
+            // ── Session name + task ──
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.displayTitle)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .lineLimit(1)
                 if !session.currentTask.isEmpty {
                     Text(session.currentTask)
                         .font(.system(size: 9))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.secondary.opacity(0.7))
                         .lineLimit(1)
                 }
             }
 
             Spacer()
-
-            // ── Status badge ──
-            VStack(alignment: .trailing, spacing: 2) {
-                HStack(spacing: 3) {
-                    Circle().fill(statusDot).frame(width: 5, height: 5)
-                    Text(shortLabel)
-                        .font(.system(size: 9, weight: .medium))
-                }
-                .foregroundColor(statusColor)
-                Text(session.elapsedText)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-            }
         }
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color.primary.opacity(0.03))
+                .fill(Color.primary.opacity(0.04))
         )
-    }
-
-    private var statusDot: Color {
-        switch session.status {
-        case .idle, .working: return .green
-        case .thinking, .blocked: return .yellow
-        case .error: return .red
-        case .stopped: return .gray
-        }
-    }
-
-    private var shortLabel: String {
-        switch session.status {
-        case .idle: return "idle"
-        case .thinking: return "thinking"
-        case .working: return "running"
-        case .blocked: return "blocked"
-        case .error: return "error"
-        case .stopped: return "done"
-        }
-    }
-
-    private var statusColor: Color {
-        switch session.status {
-        case .idle: return .green
-        case .thinking: return .yellow
-        case .working: return .green
-        case .blocked: return .yellow
-        case .error: return .red
-        case .stopped: return .gray
+        .contextMenu {
+            Button("Copy Session ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(session.id, forType: .string)
+            }
         }
     }
 }

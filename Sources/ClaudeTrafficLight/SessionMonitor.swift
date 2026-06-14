@@ -114,6 +114,7 @@ class SessionMonitor: ObservableObject {
     private func savePinned() {
         ensureConfigDir()
         let ids = sessions.filter(\.pinned).map(\.id)
+        pinnedIdsFromDisk = Set(ids)  // sync cache immediately
         let file = configDir.appendingPathComponent("pinned.json")
         guard let data = try? JSONEncoder().encode(ids) else { return }
         try? data.write(to: file)
