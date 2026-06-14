@@ -19,14 +19,16 @@ class SessionMonitor: ObservableObject {
     private let claudeDir: URL
     private let configDir: URL
     private var pidCache: [Int: (alive: Bool, checkedAt: Date)] = [:]
-    private let pidCacheTTL: TimeInterval = 30
+    private let pidCacheTTL: TimeInterval = 10
     private var previousStatuses: [String: SessionStatus] = [:]
 
     var filteredSessions: [SessionInfo] {
+        // Always hide stopped sessions unless pinned
+        let live = sessions.filter { $0.isActive || $0.pinned }
         switch filterMode {
-        case .all: return sessions
-        case .active: return sessions.filter { $0.isActive || $0.pinned }
-        case .pinned: return sessions.filter { $0.pinned }
+        case .all: return live
+        case .active: return live.filter { $0.isActive }
+        case .pinned: return live.filter { $0.pinned }
         }
     }
 
@@ -197,6 +199,17 @@ class SessionMonitor: ObservableObject {
         let isAlive = pid > 0 && cachedIsProcessAlive(pid: pid)
         let projectPath = encodePath(cwd)
 
+        // Determine status: meta JSON is the primary real-time source
+        let metaStatus: SessionStatus = {
+            switch statusStr {
+            case "busy", "running": return .working
+            case "waiting", "blocked": return .blocked
+            case "idle": return .idle
+            default: return .idle
+            }
+        }()
+
+        // JSONL provides title and task details
         let (title, jsonlStatus, currentTask, toolCount) = parseJSONL(
             sessionId: sessionId, projectPath: projectPath
         )
@@ -204,15 +217,14 @@ class SessionMonitor: ObservableObject {
         let status: SessionStatus
         if !isAlive {
             status = .stopped
+        } else if metaStatus != .idle {
+            // Meta JSON has real-time status — use it
+            status = metaStatus
         } else if jsonlStatus != .idle {
+            // Fallback to JSONL parsing
             status = jsonlStatus
         } else {
-            switch statusStr {
-            case "idle": status = .idle
-            case "busy", "running": status = .working
-            case "waiting", "blocked": status = .blocked
-            default: status = .idle
-            }
+            status = .idle
         }
 
         return SessionInfo(

@@ -106,81 +106,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Floating Window
 
     private func buildFloatingWindow() {
-        let content = VStack(spacing: 0) {
-            // Header
-            HStack(spacing: 10) {
-                let s = sharedMonitor.activeStatusSummary
-                VStack(spacing: 4) {
-                    Circle().fill(s.hasError ? Color.red : Color.red.opacity(0.15))
-                        .frame(width: 14, height: 14)
-                    Circle().fill(s.hasBlocked || s.hasThinking ? Color.yellow : Color.yellow.opacity(0.15))
-                        .frame(width: 14, height: 14)
-                    Circle().fill(s.hasWorking ? Color.green : Color.green.opacity(0.15))
-                        .frame(width: 14, height: 14)
-                }
-                .padding(6).background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude Traffic Light").font(.system(size: 14, weight: .bold))
-                    Text("\(sharedMonitor.sessions.filter(\.isActive).count) active / \(sharedMonitor.sessions.count) total")
-                        .font(.system(size: 11)).foregroundColor(.secondary)
-                }
-                Spacer()
-                Button(action: { sharedMonitor.refresh() }) {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 11))
-                }.buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
-
-            Divider()
-
-            // Session list
-            ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(sharedMonitor.filteredSessions) { session in
-                        HStack(spacing: 10) {
-                            VStack(spacing: 2) {
-                                Circle().fill(session.status == .error ? Color.red : Color.red.opacity(0.15)).frame(width: 8, height: 8)
-                                Circle().fill((session.status == .thinking || session.status == .blocked) ? Color.yellow : Color.yellow.opacity(0.15)).frame(width: 8, height: 8)
-                                Circle().fill((session.status == .working || session.status == .idle) ? Color.green : Color.green.opacity(0.15)).frame(width: 8, height: 8)
-                            }.padding(4).background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(session.displayTitle).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                Text(session.status.displayLabel).font(.system(size: 10)).foregroundColor(statusCardColor(session.status))
-                            }
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: 2) {
-                                if session.isActive {
-                                    HStack(spacing: 2) { Circle().fill(Color.green).frame(width: 5, height: 5); Text("active").font(.system(size: 9)).foregroundColor(.green) }
-                                }
-                                Text(session.elapsedText).font(.system(size: 9)).foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.03)))
-                    }
-                }
-                .padding(.horizontal, 10).padding(.vertical, 8)
-            }
-
-            Divider()
-
-            // Footer
-            HStack(spacing: 12) {
-                Toggle("Always on Top", isOn: Binding(get: { self.floatingWindow?.level == .floating },
-                                                       set: { self.floatingWindow?.level = $0 ? .floating : .normal }))
-                    .toggleStyle(.checkbox).font(.system(size: 10))
-                Spacer()
-                Button("Menu Bar Only") { [weak self] in self?.switchToMenuBarOnly() }
-                    .buttonStyle(.plain).font(.system(size: 10))
-                Button("Quit") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.plain).font(.system(size: 10)).foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 8)
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-
+        let content = FloatingWindowView(
+            monitor: sharedMonitor,
+            onMenuBarOnly: { [weak self] in self?.switchToMenuBarOnly() }
+        )
         let hosting = NSHostingView(rootView: content)
         hosting.frame.size = hosting.fittingSize
 
@@ -256,26 +185,141 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for (session, oldStatus) in changes {
             guard session.isActive else { continue }
 
+            let newIsBusy = session.status == .thinking || session.status == .working || session.status == .blocked
+            let oldIsBusy = oldStatus == .thinking || oldStatus == .working || oldStatus == .blocked
+            let isNewSession = oldStatus == .stopped
+
+            NSLog("[CTL] change: 「\(session.displayTitle)」 \(oldStatus.displayLabel) → \(session.status.displayLabel) new=\(isNewSession)")
+
             switch session.status {
-            case .blocked where oldStatus != .blocked:
-                startFlash(2, rounds: 3)  // yellow flash
-                notify("Claude Code Blocked", body: "「\(session.displayTitle)」需要你的确认")
+            case .blocked:
+                // Blocked — always alert, even on first discovery
+                startFlash(2, rounds: 4)
+                notify("Claude → 等待确认", body: "「\(session.displayTitle)」需要你的操作")
 
-            case .error where oldStatus != .error:
-                startFlash(1, rounds: 5)  // red flash
-                notify("Claude Code Error", body: "「\(session.displayTitle)」出错")
+            case .error:
+                startFlash(1, rounds: 5)
+                notify("Claude → 出错", body: "「\(session.displayTitle)」")
 
-            case .idle where (oldStatus == .thinking || oldStatus == .working):
-                startFlash(4, rounds: 1)  // green flash — task done
-                notify("Claude Code Complete", body: "「\(session.displayTitle)」执行完毕", sound: nil)
+            case .idle where oldIsBusy:
+                // Transition from busy → idle
+                startFlash(4, rounds: 1)
+                notify("Claude → 完成", body: "「\(session.displayTitle)」", sound: nil)
 
-            case .thinking where oldStatus == .idle:
-                // Started thinking — subtle yellow flash
-                startFlash(2, rounds: 1)
+            case .thinking, .working:
+                if !oldIsBusy {
+                    // Started working (including first discovery)
+                    startFlash(2, rounds: isNewSession ? 2 : 1)
+                    if isNewSession {
+                        notify("Claude → 开始执行", body: "「\(session.displayTitle)」", sound: nil)
+                    }
+                }
 
             default: break
             }
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Floating Window View (separate struct for proper @State management)
+// ═══════════════════════════════════════════════════════════════════════
+
+struct FloatingWindowView: View {
+    @ObservedObject var monitor: SessionMonitor
+    var onMenuBarOnly: () -> Void
+    @State private var alwaysOnTop = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            sessionList
+            Divider()
+            footer
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { syncWindowLevel() }
+        .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
+    }
+
+    private func syncWindowLevel() {
+        guard let window = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
+        window.level = alwaysOnTop ? .floating : .normal
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            let s = monitor.activeStatusSummary
+            VStack(spacing: 4) {
+                Circle().fill(s.hasError ? Color.red : Color.red.opacity(0.15)).frame(width: 14, height: 14)
+                Circle().fill(s.hasBlocked || s.hasThinking ? Color.yellow : Color.yellow.opacity(0.15)).frame(width: 14, height: 14)
+                Circle().fill(s.hasWorking ? Color.green : Color.green.opacity(0.15)).frame(width: 14, height: 14)
+            }
+            .padding(6).background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Claude Traffic Light").font(.system(size: 14, weight: .bold))
+                Text("\(monitor.sessions.filter(\.isActive).count) active / \(monitor.sessions.count) total")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            Spacer()
+            Button(action: { monitor.refresh() }) {
+                Image(systemName: "arrow.clockwise").font(.system(size: 11))
+            }.buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
+    }
+
+    // MARK: - Session list
+
+    private var sessionList: some View {
+        ScrollView {
+            LazyVStack(spacing: 6) {
+                ForEach(monitor.filteredSessions) { session in
+                    HStack(spacing: 10) {
+                        VStack(spacing: 2) {
+                            Circle().fill(session.status == .error ? Color.red : Color.red.opacity(0.15)).frame(width: 8, height: 8)
+                            Circle().fill((session.status == .thinking || session.status == .blocked) ? Color.yellow : Color.yellow.opacity(0.15)).frame(width: 8, height: 8)
+                            Circle().fill((session.status == .working || session.status == .idle) ? Color.green : Color.green.opacity(0.15)).frame(width: 8, height: 8)
+                        }.padding(4).background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.displayTitle).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                            let taskText = session.currentTask.isEmpty ? "" : " · \(session.currentTask)"
+                            Text(session.status.displayLabel + taskText).font(.system(size: 10)).foregroundColor(statusCardColor(session.status))
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            if session.isActive {
+                                HStack(spacing: 2) { Circle().fill(Color.green).frame(width: 5, height: 5); Text("live").font(.system(size: 9)).foregroundColor(.green) }
+                            }
+                            Text(session.elapsedText).font(.system(size: 9)).foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.03)))
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+        }
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Toggle("Always on Top", isOn: $alwaysOnTop)
+                .toggleStyle(.checkbox).font(.system(size: 10))
+            Spacer()
+            Button("Menu Bar Only") { onMenuBarOnly() }
+                .buttonStyle(.plain).font(.system(size: 10))
+            Button("Quit") { NSApplication.shared.terminate(nil) }
+                .buttonStyle(.plain).font(.system(size: 10)).foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
     }
 }
 

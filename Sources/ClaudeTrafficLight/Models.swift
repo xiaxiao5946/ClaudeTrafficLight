@@ -56,11 +56,16 @@ struct SessionInfo: Identifiable, Hashable {
     var pinned: Bool = false
 
     var displayTitle: String {
-        if title.isEmpty {
-            let url = URL(fileURLWithPath: cwd)
-            return url.lastPathComponent
-        }
-        return title
+        // 1. Project directory name (best)
+        let proj = projectDir
+        if !proj.isEmpty && proj != "/" { return proj }
+
+        // 2. First user message
+        if !title.isEmpty { return String(title.prefix(60)) }
+
+        // 3. cwd fallback
+        let url = URL(fileURLWithPath: cwd)
+        return url.lastPathComponent
     }
 
     var elapsedText: String {
