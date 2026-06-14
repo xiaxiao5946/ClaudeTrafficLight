@@ -29,6 +29,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProcessInfo.processInfo.disableAutomaticTermination("ClaudeTrafficLight running")
 
+        // Set app icon (Dock + notification)
+        NSApp.applicationIconImage = TrafficLightIcon.drawNotificationIcon(state: .init(
+            redOn: false, yellowOn: false, greenOn: false, flashMask: 0
+        ))
+
         NSApp.setActivationPolicy(.accessory)
 
         buildStatusItem()
@@ -74,6 +79,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             flashMask: flashMask
         )
         statusItem.button?.image = TrafficLightIcon.draw(state: state)
+        // Sync app icon
+        NSApp.applicationIconImage = TrafficLightIcon.drawNotificationIcon(state: .init(
+            redOn: s.hasError,
+            yellowOn: s.hasBlocked || s.hasThinking,
+            greenOn: s.hasWorking,
+            flashMask: 0
+        ))
     }
 
     @objc private func statusClicked() {
