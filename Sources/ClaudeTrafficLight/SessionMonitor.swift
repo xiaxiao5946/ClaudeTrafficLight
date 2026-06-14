@@ -199,29 +199,28 @@ class SessionMonitor: ObservableObject {
         let isAlive = pid > 0 && cachedIsProcessAlive(pid: pid)
         let projectPath = encodePath(cwd)
 
-        // Determine status: meta JSON is the primary real-time source
-        let metaStatus: SessionStatus = {
-            switch statusStr {
-            case "busy", "running": return .working
-            case "waiting", "blocked": return .blocked
-            case "idle": return .idle
-            default: return .idle
-            }
-        }()
-
-        // JSONL provides title and task details
+        // Determine status: JSONL timestamp-based analysis provides real-time state
         let (title, jsonlStatus, currentTask, toolCount) = parseJSONL(
             sessionId: sessionId, projectPath: projectPath
         )
 
+        // Meta JSON can override with explicit non-idle status
+        let metaStatus: SessionStatus? = {
+            switch statusStr {
+            case "busy", "running": return .working
+            case "waiting", "blocked": return .blocked
+            default: return nil  // "idle" or missing → no opinion
+            }
+        }()
+
         let status: SessionStatus
         if !isAlive {
             status = .stopped
-        } else if metaStatus != .idle {
-            // Meta JSON has real-time status — use it
-            status = metaStatus
+        } else if let ms = metaStatus, ms != .idle {
+            // Meta JSON explicitly says busy/blocked — trust it
+            status = ms
         } else if jsonlStatus != .idle {
-            // Fallback to JSONL parsing
+            // JSONL timestamp says recent activity
             status = jsonlStatus
         } else {
             status = .idle
@@ -268,49 +267,88 @@ class SessionMonitor: ObservableObject {
             return ("", .idle, "", 0)
         }
 
+        let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return ("", .idle, "", 0) }
+
         var title = ""
-        var status: SessionStatus = .idle
-        var currentTask = ""
         var toolCount = 0
         var lastToolName = ""
 
-        let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
-        let startIdx = max(0, lines.count - 200)
+        // Parse last line for real-time status
+        guard let lastLineData = lines.last?.data(using: .utf8),
+              let lastJson = try? JSONSerialization.jsonObject(with: lastLineData) as? [String: Any] else {
+            return ("", .idle, "", 0)
+        }
 
-        for i in startIdx..<lines.count {
+        let lastType = lastJson["type"] as? String ?? ""
+        let lastTimestamp = lastJson["timestamp"] as? String ?? ""
+        let lastStopReason = (lastJson["message"] as? [String: Any])?["stop_reason"] as? String
+
+        // Parse ISO timestamp to check recency
+        let isRecent: Bool = {
+            let fmt = ISO8601DateFormatter()
+            fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard let date = fmt.date(from: lastTimestamp) ?? {
+                // Try without fractional seconds
+                let f = ISO8601DateFormatter()
+                return f.date(from: lastTimestamp)
+            }() else { return false }
+            return Date().timeIntervalSince(date) < 30  // active within 30s
+        }()
+
+        // Determine status from last event
+        let status: SessionStatus
+        if lastType == "assistant" {
+            if lastStopReason == "tool_use" {
+                status = .working  // executing tool
+            } else if isRecent {
+                status = .thinking
+            } else {
+                status = .idle
+            }
+        } else if lastType == "user" {
+            // Last event is user → check if it contains a tool_result (model is processing)
+            let content = (lastJson["message"] as? [String: Any])?["content"] as? [[String: Any]]
+            let hasToolResult = content?.contains { $0["type"] as? String == "tool_result" } ?? false
+            if hasToolResult && isRecent {
+                status = .working  // tool just completed, model will respond
+            } else if isRecent {
+                status = .thinking  // user just sent a message
+            } else {
+                status = .idle
+            }
+        } else if lastType == "system" {
+            let subtype = lastJson["subtype"] as? String ?? ""
+            status = subtype.contains("permission") ? .blocked : .idle
+        } else {
+            status = isRecent ? .idle : .idle  // idle by default
+        }
+
+        // Also scan for title (first user message) and tool counts
+        let scanEnd = min(500, lines.count)
+        for i in 0..<scanEnd {
             guard let lineData = lines[i].data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
-
             let type = json["type"] as? String ?? ""
 
-            // Title from first user message
             if type == "user" && title.isEmpty {
                 title = extractUserText(json) ?? ""
             }
-
-            // Tool calls → thinking
-            if type == "assistant" {
-                if let message = json["message"] as? [String: Any],
-                   let contentArr = message["content"] as? [[String: Any]] {
-                    for block in contentArr {
-                        if block["type"] as? String == "tool_use" {
-                            toolCount += 1
-                            if let name = block["name"] as? String { lastToolName = name }
-                        }
+            if type == "assistant", let msg = json["message"] as? [String: Any],
+               let contentArr = msg["content"] as? [[String: Any]] {
+                for block in contentArr {
+                    if block["type"] as? String == "tool_use" {
+                        toolCount += 1
+                        if let name = block["name"] as? String { lastToolName = name }
                     }
                 }
-                status = .thinking
-            }
-            if type == "tool_result" || type == "tool" { status = .thinking }
-
-            if type == "system" {
-                let subtype = json["subtype"] as? String ?? ""
-                if subtype.contains("permission") { status = .blocked }
-                if subtype == "away_summary" || subtype == "turn_duration" { status = .idle }
             }
         }
 
-        if status == .thinking && !lastToolName.isEmpty { currentTask = lastToolName }
+        var currentTask = ""
+        if (status == .thinking || status == .working) && !lastToolName.isEmpty {
+            currentTask = lastToolName
+        }
         return (String(title.prefix(60)), status, currentTask, toolCount)
     }
 

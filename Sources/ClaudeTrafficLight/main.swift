@@ -185,15 +185,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for (session, oldStatus) in changes {
             guard session.isActive else { continue }
 
-            let newIsBusy = session.status == .thinking || session.status == .working || session.status == .blocked
-            let oldIsBusy = oldStatus == .thinking || oldStatus == .working || oldStatus == .blocked
+            let isBusy = { (s: SessionStatus) in s == .thinking || s == .working || s == .blocked }
+            let newIsBusy = isBusy(session.status)
+            let oldIsBusy = isBusy(oldStatus)
             let isNewSession = oldStatus == .stopped
 
-            NSLog("[CTL] change: 「\(session.displayTitle)」 \(oldStatus.displayLabel) → \(session.status.displayLabel) new=\(isNewSession)")
+            NSLog("[CTL] change: 「\(session.displayTitle)」 \(oldStatus.displayLabel) → \(session.status.displayLabel)")
 
             switch session.status {
             case .blocked:
-                // Blocked — always alert, even on first discovery
                 startFlash(2, rounds: 4)
                 notify("Claude → 等待确认", body: "「\(session.displayTitle)」需要你的操作")
 
@@ -202,17 +202,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 notify("Claude → 出错", body: "「\(session.displayTitle)」")
 
             case .idle where oldIsBusy:
-                // Transition from busy → idle
                 startFlash(4, rounds: 1)
                 notify("Claude → 完成", body: "「\(session.displayTitle)」", sound: nil)
 
             case .thinking, .working:
-                if !oldIsBusy {
-                    // Started working (including first discovery)
+                if !oldIsBusy || isNewSession {
                     startFlash(2, rounds: isNewSession ? 2 : 1)
-                    if isNewSession {
-                        notify("Claude → 开始执行", body: "「\(session.displayTitle)」", sound: nil)
-                    }
+                    notify("Claude → 执行中", body: "「\(session.displayTitle)」开始 \(session.currentTask)", sound: nil)
                 }
 
             default: break
@@ -232,11 +228,44 @@ struct FloatingWindowView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            // ── Session cards with prominent traffic lights ──
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(monitor.filteredSessions) { session in
+                        FloatingSessionCard(session: session)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 8)
+            }
+
             Divider()
-            sessionList
-            Divider()
-            footer
+
+            // ── Bottom bar ──
+            HStack(spacing: 12) {
+                Button(action: { monitor.refresh() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                        Text("Refresh").font(.system(size: 10))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+
+                Toggle("Always on Top", isOn: $alwaysOnTop)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 10))
+
+                Spacer()
+
+                Button("Menu Bar Only") { onMenuBarOnly() }
+                    .buttonStyle(.plain).font(.system(size: 10))
+                Button("Quit") { NSApplication.shared.terminate(nil) }
+                    .buttonStyle(.plain).font(.system(size: 10)).foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { syncWindowLevel() }
@@ -247,79 +276,100 @@ struct FloatingWindowView: View {
         guard let window = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
         window.level = alwaysOnTop ? .floating : .normal
     }
+}
 
-    // MARK: - Header
+// MARK: - Floating session card (prominent traffic light)
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            let s = monitor.activeStatusSummary
+struct FloatingSessionCard: View {
+    let session: SessionInfo
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // ── Prominent traffic light ──
             VStack(spacing: 4) {
-                Circle().fill(s.hasError ? Color.red : Color.red.opacity(0.15)).frame(width: 14, height: 14)
-                Circle().fill(s.hasBlocked || s.hasThinking ? Color.yellow : Color.yellow.opacity(0.15)).frame(width: 14, height: 14)
-                Circle().fill(s.hasWorking ? Color.green : Color.green.opacity(0.15)).frame(width: 14, height: 14)
+                Circle()
+                    .fill(session.status == .error ? Color.red : Color.red.opacity(0.12))
+                    .frame(width: 16, height: 16)
+                    .shadow(color: session.status == .error ? .red.opacity(0.6) : .clear, radius: 6)
+                Circle()
+                    .fill((session.status == .thinking || session.status == .blocked) ? Color.yellow : Color.yellow.opacity(0.12))
+                    .frame(width: 16, height: 16)
+                    .shadow(color: (session.status == .thinking || session.status == .blocked) ? .yellow.opacity(0.6) : .clear, radius: 6)
+                Circle()
+                    .fill((session.status == .working || session.status == .idle) ? Color.green : Color.green.opacity(0.12))
+                    .frame(width: 16, height: 16)
+                    .shadow(color: (session.status == .working || session.status == .idle) ? .green.opacity(0.6) : .clear, radius: 6)
             }
-            .padding(6).background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    )
+            )
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Claude Traffic Light").font(.system(size: 14, weight: .bold))
-                Text("\(monitor.sessions.filter(\.isActive).count) active / \(monitor.sessions.count) total")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
-            }
-            Spacer()
-            Button(action: { monitor.refresh() }) {
-                Image(systemName: "arrow.clockwise").font(.system(size: 11))
-            }.buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
-    }
+            // ── Session info ──
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(session.displayTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
 
-    // MARK: - Session list
-
-    private var sessionList: some View {
-        ScrollView {
-            LazyVStack(spacing: 6) {
-                ForEach(monitor.filteredSessions) { session in
-                    HStack(spacing: 10) {
-                        VStack(spacing: 2) {
-                            Circle().fill(session.status == .error ? Color.red : Color.red.opacity(0.15)).frame(width: 8, height: 8)
-                            Circle().fill((session.status == .thinking || session.status == .blocked) ? Color.yellow : Color.yellow.opacity(0.15)).frame(width: 8, height: 8)
-                            Circle().fill((session.status == .working || session.status == .idle) ? Color.green : Color.green.opacity(0.15)).frame(width: 8, height: 8)
-                        }.padding(4).background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(session.displayTitle).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            let taskText = session.currentTask.isEmpty ? "" : " · \(session.currentTask)"
-                            Text(session.status.displayLabel + taskText).font(.system(size: 10)).foregroundColor(statusCardColor(session.status))
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            if session.isActive {
-                                HStack(spacing: 2) { Circle().fill(Color.green).frame(width: 5, height: 5); Text("live").font(.system(size: 9)).foregroundColor(.green) }
-                            }
-                            Text(session.elapsedText).font(.system(size: 9)).foregroundColor(.secondary)
-                        }
+                    if session.isActive {
+                        Circle().fill(Color.green)
+                            .frame(width: 6, height: 6)
                     }
-                    .padding(.horizontal, 10).padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.03)))
+                }
+
+                if !session.currentTask.isEmpty {
+                    Text(session.currentTask)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text(session.status.displayLabel)
+                        .font(.system(size: 10))
+                        .foregroundColor(statusColor)
                 }
             }
-            .padding(.horizontal, 10).padding(.vertical, 8)
+
+            Spacer()
+
+            // ── Meta ──
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(session.status.displayLabel)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(statusColor)
+                Text(session.elapsedText)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text("\(session.toolCallCount) tools")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary.opacity(0.7))
+            }
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.primary.opacity(0.02))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+                )
+        )
     }
 
-    // MARK: - Footer
-
-    private var footer: some View {
-        HStack(spacing: 12) {
-            Toggle("Always on Top", isOn: $alwaysOnTop)
-                .toggleStyle(.checkbox).font(.system(size: 10))
-            Spacer()
-            Button("Menu Bar Only") { onMenuBarOnly() }
-                .buttonStyle(.plain).font(.system(size: 10))
-            Button("Quit") { NSApplication.shared.terminate(nil) }
-                .buttonStyle(.plain).font(.system(size: 10)).foregroundColor(.secondary)
+    private var statusColor: Color {
+        switch session.status {
+        case .idle: return .green
+        case .thinking: return .yellow
+        case .working: return .green
+        case .blocked: return .yellow
+        case .error: return .red
+        case .stopped: return .gray
         }
-        .padding(.horizontal, 14).padding(.vertical, 8)
     }
 }
 
