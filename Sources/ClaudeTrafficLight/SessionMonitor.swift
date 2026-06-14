@@ -81,9 +81,7 @@ class SessionMonitor: ObservableObject {
                     self.previousStatuses[s.id] = s.status
                 }
                 self.sessions = updated
-                if self.selectedSessionId == nil, let first = updated.first {
-                    self.selectedSessionId = first.id
-                }
+                // Don't auto-select — user clicks to see details
                 NotificationCenter.default.post(
                     name: .CTLSessionsChanged,
                     object: nil,
