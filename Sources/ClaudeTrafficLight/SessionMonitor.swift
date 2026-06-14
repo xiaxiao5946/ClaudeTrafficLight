@@ -8,6 +8,7 @@ class SessionMonitor: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var selectedSessionId: String?
     @Published var filterMode: FilterMode = .all
+    @Published var expandedSessionIds: Set<String> = []
     private var dismissedIds: Set<String> = []
     private var justCompletedIds: Set<String> = []  // show until user clicks
 
@@ -43,6 +44,23 @@ class SessionMonitor: ObservableObject {
     func dismissCompleted(_ sessionId: String) {
         justCompletedIds.remove(sessionId)
         dismissedIds.insert(sessionId)
+        expandedSessionIds.remove(sessionId)
+        objectWillChange.send()
+    }
+
+    /// Toggle per-session expanded/collapsed state
+    func toggleSessionExpand(_ sessionId: String) {
+        if expandedSessionIds.contains(sessionId) {
+            expandedSessionIds.remove(sessionId)
+        } else {
+            expandedSessionIds.insert(sessionId)
+        }
+        objectWillChange.send()
+    }
+
+    /// Auto-expand a session (on notification)
+    func expandSession(_ sessionId: String) {
+        expandedSessionIds.insert(sessionId)
         objectWillChange.send()
     }
 

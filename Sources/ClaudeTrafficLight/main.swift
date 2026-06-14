@@ -242,9 +242,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // Auto-expand collapsed window on important events
+        // Auto-expand collapsed window + specific session on important events
         if shouldExpand {
-            NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
+            NotificationCenter.default.post(name: .CTLExpandWindow, object: nil,
+                                            userInfo: ["sessionId": changes.last?.0.id ?? ""])
         }
     }
 }
@@ -261,8 +262,8 @@ struct FloatingWindowView: View {
     @State private var isCollapsed = false
     @State private var showTooltip = false
 
+    private let lightColumnWidth: CGFloat = 42   // exact width of traffic light column in card
     private let expandedWidth: CGFloat = 260
-    private let collapsedWidth: CGFloat = 52
 
     var body: some View {
         mainContent
@@ -278,8 +279,11 @@ struct FloatingWindowView: View {
             .padding(4)
             .onAppear { syncWindowLevel(); startSnapMonitor() }
             .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
-            .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { n in
                 if isCollapsed { expand() }
+                if let sid = n.userInfo?["sessionId"] as? String, !sid.isEmpty {
+                    monitor.expandSession(sid)
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
                 isCollapsed = true
@@ -359,16 +363,16 @@ struct FloatingWindowView: View {
     // MARK: - Collapsed view (per-session lights)
 
     private var collapsedView: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             if monitor.filteredSessions.isEmpty {
-                CollapsedLight(red: false, yellow: false, green: false, dot: 10)
+                CollapsedLight(red: false, yellow: false, green: false, dot: 18)
             } else {
                 ForEach(monitor.filteredSessions) { session in
                     CollapsedLight(
                         red: session.status == .error,
                         yellow: session.status == .thinking || session.status == .blocked,
                         green: session.status == .working,
-                        dot: 10
+                        dot: 18
                     )
                 }
             }
@@ -376,7 +380,12 @@ struct FloatingWindowView: View {
                 Image(systemName: "arrowtriangle.forward.fill").font(.system(size: 5)).foregroundColor(.secondary.opacity(0.3))
             }.buttonStyle(.plain)
         }
-        .padding(.vertical, 6).padding(.horizontal, 8).frame(width: collapsedWidth)
+        .padding(.vertical, 6).padding(.horizontal, 6)
+        .frame(width: lightColumnWidth)
+        .background(
+            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                .overlay(Color.black.opacity(0.08))
+        )
         .onHover { inside in
             if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             showTooltip = inside
@@ -405,9 +414,9 @@ struct FloatingWindowView: View {
         isCollapsed = false
         resizeWindow(to: contentHeight, width: expandedWidth)
         var frame = win.frame; let sf = screen.visibleFrame
-        if frame.minX < sf.midX { frame.origin.x = sf.minX + 60 }
-        else { frame.origin.x = sf.maxX - expandedWidth - 60 }
-        frame.origin.y = sf.midY - frame.height / 2
+        // Flush with edge — left side at screen edge
+        if frame.minX < sf.midX { frame.origin.x = sf.minX }
+        else { frame.origin.x = sf.maxX - expandedWidth }
         win.setFrame(frame, display: true, animate: true)
         windowLastMoveTime = Date()
     }
@@ -433,7 +442,7 @@ struct CollapsedLight: View {
     let red: Bool, yellow: Bool, green: Bool
     var dot: CGFloat = 8
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 4) {
             Circle().fill(red ? Color.red : Color.red.opacity(0.12)).frame(width: dot, height: dot)
                 .shadow(color: red ? .red.opacity(0.6) : .clear, radius: 4)
             Circle().fill(yellow ? Color.yellow : Color.yellow.opacity(0.12)).frame(width: dot, height: dot)
@@ -473,15 +482,14 @@ private func checkSnapGlobal() {
 
 private func snapWindow(to edge: UnitPoint, win: NSWindow, screen: CGRect) {
     gSnapInProgress = true
-    let collapsedW: CGFloat = 52
+    let collapsedW: CGFloat = 42
     var frame = win.frame
     if edge == .leading {
         frame.origin.x = screen.minX
     } else {
-        frame.origin.x = screen.maxX - collapsedW - 8
+        frame.origin.x = screen.maxX - collapsedW
     }
     frame.size.width = collapsedW
-    frame.origin.y = screen.midY - frame.height / 2
     win.setFrame(frame, display: true, animate: true)
     NotificationCenter.default.post(name: .CTLSnapCollapse, object: nil)
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { gSnapInProgress = false }
@@ -520,11 +528,16 @@ struct VisualEffectView: NSViewRepresentable {
 // MARK: - Glass session card (prominent lights, compact)
 
 struct GlassSessionCard: View {
+    @ObservedObject var monitor = sharedMonitor
     let session: SessionInfo
+
+    private var isExpanded: Bool {
+        monitor.expandedSessionIds.contains(session.id)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
-            // ── Large traffic light ──
+            // ── Traffic light (always visible, same position) ──
             VStack(spacing: 4) {
                 Circle()
                     .fill(session.status == .error ? Color.red : Color.red.opacity(0.12))
@@ -545,28 +558,35 @@ struct GlassSessionCard: View {
                     .fill(Color.primary.opacity(0.06))
             )
 
-            // ── Session name + task ──
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.displayTitle)
-                    .font(.system(size: 13, weight: .bold))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                if !session.currentTask.isEmpty {
-                    Text(session.currentTask)
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary.opacity(0.7))
-                        .lineLimit(1)
+            if isExpanded {
+                // ── Session name + task ──
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.displayTitle)
+                        .font(.system(size: 13, weight: .bold))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !session.currentTask.isEmpty {
+                        Text(session.currentTask)
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary.opacity(0.7))
+                            .lineLimit(1)
+                    }
                 }
-            }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
 
-            Spacer()
+                Spacer()
+            }
         }
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.primary.opacity(0.04))
         )
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
         .contextMenu {
+            Button(isExpanded ? "Collapse" : "Expand") {
+                monitor.toggleSessionExpand(session.id)
+            }
             Button("Copy Session ID") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(session.id, forType: .string)
@@ -578,7 +598,11 @@ struct GlassSessionCard: View {
             }
         }
         .onTapGesture {
-            sharedMonitor.dismissCompleted(session.id)
+            if session.status == .idle {
+                sharedMonitor.dismissCompleted(session.id)
+            } else {
+                monitor.toggleSessionExpand(session.id)
+            }
         }
     }
 }
