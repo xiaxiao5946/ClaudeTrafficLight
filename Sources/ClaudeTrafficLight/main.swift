@@ -376,10 +376,6 @@ struct FloatingWindowView: View {
             }
         }
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 10)
-                .onEnded { _ in expand() }
-        )
         .onTapGesture(count: 2) { expand() }
     }
 
@@ -416,13 +412,17 @@ struct FloatingWindowView: View {
 
         var frame = win.frame
         let screenFrame = screen.visibleFrame
+        // 60px from edge — well past the 40px snap threshold
         if frame.minX < screenFrame.midX {
-            frame.origin.x = screenFrame.minX + 8
+            frame.origin.x = screenFrame.minX + 60
         } else {
-            frame.origin.x = screenFrame.maxX - expandedWidth - 8
+            frame.origin.x = screenFrame.maxX - expandedWidth - 60
         }
         frame.origin.y = screenFrame.midY - frame.height / 2
         win.setFrame(frame, display: true, animate: true)
+
+        // Prevent immediate re-snap
+        windowLastMoveTime = Date()
     }
 
     private func resizeWindow(to height: CGFloat, width: CGFloat) {
