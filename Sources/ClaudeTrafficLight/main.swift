@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import UserNotifications
 
 // ═══════════════════════════════════════════════════════════════════════
 //  ClaudeTrafficLight — Monitor + Alert
@@ -23,17 +22,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var flashRounds: Int = 0
     private var flashMask: UInt8 = 0
 
-    // Notification center
-    private let notifCenter = UNUserNotificationCenter.current()
-    private var notifGranted = false
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProcessInfo.processInfo.disableAutomaticTermination("ClaudeTrafficLight running")
 
-        // Start as accessory — status item + menu bar only
         NSApp.setActivationPolicy(.accessory)
 
-        requestNotifications()
         buildStatusItem()
         buildPopover()
         buildFloatingWindow()
@@ -161,22 +154,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Notifications
+    // MARK: - Notifications (NSUserNotification — no permission required)
 
-    private func requestNotifications() {
-        notifCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            self.notifGranted = granted
-        }
-    }
-
-    private func notify(_ title: String, body: String, sound: UNNotificationSound? = .default) {
-        guard notifGranted else { return }
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        if let s = sound { content.sound = s }
-        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        notifCenter.add(req)
+    private func notify(_ title: String, body: String, sound: Bool = true) {
+        let note = NSUserNotification()
+        note.title = title
+        note.informativeText = body
+        note.soundName = sound ? NSUserNotificationDefaultSoundName : nil
+        NSUserNotificationCenter.default.deliver(note)
+        NSLog("[CTL] notified: \(title)")
     }
 
     // MARK: - Session change handler
@@ -203,12 +189,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             case .idle where oldIsBusy:
                 startFlash(4, rounds: 1)
-                notify("Claude → 完成", body: "「\(session.displayTitle)」", sound: nil)
+                notify("Claude → 完成", body: "「\(session.displayTitle)」", sound: false)
 
             case .thinking, .working:
                 if !oldIsBusy || isNewSession {
                     startFlash(2, rounds: isNewSession ? 2 : 1)
-                    notify("Claude → 执行中", body: "「\(session.displayTitle)」开始 \(session.currentTask)", sound: nil)
+                    notify("Claude → 执行中", body: "「\(session.displayTitle)」开始 \(session.currentTask)", sound: false)
                 }
 
             default: break

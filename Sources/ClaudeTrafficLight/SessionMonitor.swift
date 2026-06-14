@@ -23,7 +23,6 @@ class SessionMonitor: ObservableObject {
     private var previousStatuses: [String: SessionStatus] = [:]
 
     var filteredSessions: [SessionInfo] {
-        // Always hide stopped sessions unless pinned
         let live = sessions.filter { $0.isActive || $0.pinned }
         switch filterMode {
         case .all: return live
@@ -143,9 +142,11 @@ class SessionMonitor: ObservableObject {
             }
         }
 
-        // 2. Scan project JSONLs for sessions not in live list
+        // 2. Scan project JSONLs ONLY for pinned sessions or recent ones (cap 20)
+        let maxTotal = 20
         let projectsDir = claudeDir.appendingPathComponent("projects")
-        if let projectDirs = try? FileManager.default.contentsOfDirectory(at: projectsDir,
+        if results.count < maxTotal,
+           let projectDirs = try? FileManager.default.contentsOfDirectory(at: projectsDir,
                                                                            includingPropertiesForKeys: nil) {
             for projDir in projectDirs {
                 var isDir: ObjCBool = false
@@ -153,16 +154,18 @@ class SessionMonitor: ObservableObject {
                       isDir.boolValue else { continue }
                 guard let jsonlFiles = try? FileManager.default.contentsOfDirectory(at: projDir,
                                                                                       includingPropertiesForKeys: nil) else { continue }
+                // Only include project sessions that are pinned or very recent
                 for jsonlFile in jsonlFiles where jsonlFile.pathExtension == "jsonl" {
                     let sid = jsonlFile.deletingPathExtension().lastPathComponent
                     guard !seenIds.contains(sid) else { continue }
+                    guard pinnedIdsFromDisk.contains(sid) else { continue }  // only pinned
                     if let info = parseProjectJSONL(jsonlFile, projectPath: projDir.lastPathComponent) {
                         results.append(info)
                         seenIds.insert(info.id)
                     }
-                    if results.count >= 50 { break } // cap
+                    if results.count >= maxTotal { break }
                 }
-                if results.count >= 50 { break }
+                if results.count >= maxTotal { break }
             }
         }
 
@@ -185,7 +188,9 @@ class SessionMonitor: ObservableObject {
 
     private func parseSessionJSON(_ file: URL) -> SessionInfo? {
         guard let data = try? Data(contentsOf: file),
+              !data.isEmpty,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            NSLog("[CTL] skip unparseable session file: \(file.lastPathComponent)")
             return nil
         }
 
