@@ -171,7 +171,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         note.informativeText = body
         note.soundName = sound ? NSUserNotificationDefaultSoundName : nil
         // Traffic light icon in notification
-        note.contentImage = TrafficLightIcon.draw(state: .init(
+        note.contentImage = TrafficLightIcon.drawNotificationIcon(state: .init(
             redOn: sharedMonitor.activeStatusSummary.hasError,
             yellowOn: sharedMonitor.activeStatusSummary.hasBlocked || sharedMonitor.activeStatusSummary.hasThinking,
             greenOn: sharedMonitor.activeStatusSummary.hasWorking,
@@ -441,9 +441,12 @@ struct FloatingWindowView: View {
                 guard let win = n.object as? NSWindow,
                       win.title == "Claude Traffic Light" else { return }
                 windowLastMoveTime = Date()
-                // Drag-collapsed → auto-expand (unless snap is in progress)
+                // Drag-collapsed → auto-expand
                 if win.frame.width < 60 && !gSnapInProgress {
+                    NSLog("[CTL] drag-expand: width=\(win.frame.width) snapInProgress=\(gSnapInProgress)")
+                    gSnapInProgress = true  // block snap during expand
                     NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { gSnapInProgress = false }
                 }
             }
             windowSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in

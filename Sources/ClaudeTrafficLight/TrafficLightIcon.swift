@@ -68,4 +68,51 @@ enum TrafficLightIcon {
         image.unlockFocus()
         return image
     }
+
+    /// Larger square icon for notifications
+    static func drawNotificationIcon(state: State) -> NSImage {
+        let size = NSSize(width: 48, height: 48)
+        let image = NSImage(size: size)
+        image.isTemplate = false
+
+        image.lockFocus()
+
+        let dotR: CGFloat = 10
+        let xs: [CGFloat] = [12, 24, 36]
+        let y: CGFloat = 24
+
+        let onColors: [(red: CGFloat, green: CGFloat, blue: CGFloat)] = [
+            (1.0, 0.15, 0.15),
+            (1.0, 0.78, 0.00),
+            (0.15, 0.88, 0.25),
+        ]
+        let offAlpha: CGFloat = 0.18
+
+        let ons = [state.redOn, state.yellowOn, state.greenOn]
+
+        for i in 0..<3 {
+            let path = NSBezierPath(
+                ovalIn: NSRect(x: xs[i] - dotR / 2, y: y - dotR / 2,
+                               width: dotR, height: dotR)
+            )
+            if ons[i] {
+                let glow = NSBezierPath(
+                    ovalIn: NSRect(x: xs[i] - dotR / 2 - 3, y: y - dotR / 2 - 3,
+                                   width: dotR + 6, height: dotR + 6)
+                )
+                NSColor(red: onColors[i].red, green: onColors[i].green,
+                        blue: onColors[i].blue, alpha: 0.12).setFill()
+                glow.fill()
+                let c = onColors[i]
+                NSColor(red: c.red, green: c.green, blue: c.blue, alpha: 1.0).setFill()
+                path.fill()
+            } else {
+                NSColor.systemGray.withAlphaComponent(offAlpha).setFill()
+                path.fill()
+            }
+        }
+
+        image.unlockFocus()
+        return image
+    }
 }
