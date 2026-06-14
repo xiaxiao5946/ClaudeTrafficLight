@@ -415,12 +415,11 @@ struct FloatingWindowView: View {
     private func expand() {
         guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
               let screen = win.screen else { return }
-        isCollapsed = false
-        // Expand all sessions when manually expanding
+        // Expand sessions BEFORE window, so cards render expanded
         for s in monitor.filteredSessions {
             monitor.expandedSessionIds.insert(s.id)
         }
-        monitor.objectWillChange.send()
+        isCollapsed = false
         resizeWindow(to: contentHeight, width: expandedWidth)
         var frame = win.frame; let sf = screen.visibleFrame
         if frame.minX < sf.midX { frame.origin.x = sf.minX }
