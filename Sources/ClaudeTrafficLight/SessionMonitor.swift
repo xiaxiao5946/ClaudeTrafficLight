@@ -228,23 +228,26 @@ class SessionMonitor: ObservableObject {
             sessionId: sessionId, projectPath: projectPath
         )
 
-        // Meta JSON can override with explicit non-idle status
+        // Meta JSON: trust explicit status fields. Only defer to JSONL if absent.
+        let hasExplicitStatus = json["status"] != nil
         let metaStatus: SessionStatus? = {
+            guard hasExplicitStatus else { return nil }
             switch statusStr {
             case "busy", "running": return .working
             case "waiting", "blocked": return .blocked
-            default: return nil  // "idle" or missing → no opinion
+            case "idle": return .idle
+            default: return nil
             }
         }()
 
         let status: SessionStatus
         if !isAlive {
             status = .stopped
-        } else if let ms = metaStatus, ms != .idle {
-            // Meta JSON explicitly says busy/blocked — trust it
+        } else if let ms = metaStatus {
+            // Meta JSON has explicit status field → trust it (even idle)
             status = ms
         } else if jsonlStatus != .idle {
-            // JSONL timestamp says recent activity
+            // No explicit meta status → fall back to JSONL timestamp
             status = jsonlStatus
         } else {
             status = .idle
