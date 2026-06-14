@@ -107,12 +107,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hosting.frame.size = hosting.fittingSize
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 500),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            contentRect: NSRect(x: 0, y: 0, width: 280, height: 380),
+            styleMask: [.closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         window.title = "Claude Traffic Light"
         window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.center()
         window.setFrameAutosaveName("CTLFloating")
         window.contentView = hosting
@@ -169,32 +170,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleSessionChanges(_ changes: [(SessionInfo, SessionStatus)]) {
         for (session, oldStatus) in changes {
-            guard session.isActive else { continue }
-
             let isBusy = { (s: SessionStatus) in s == .thinking || s == .working || s == .blocked }
             let newIsBusy = isBusy(session.status)
             let oldIsBusy = isBusy(oldStatus)
-            let isNewSession = oldStatus == .stopped
 
-            NSLog("[CTL] change: 「\(session.displayTitle)」 \(oldStatus.displayLabel) → \(session.status.displayLabel)")
+            NSLog("[CTL] change: 「\(session.displayTitle)」 \(oldStatus.displayLabel) → \(session.status.displayLabel) active=\(session.isActive)")
 
             switch session.status {
-            case .blocked:
+            case .stopped where oldStatus != .stopped:
+                // Session process died
+                startFlash(4, rounds: 2)
+                notify("Claude → 会话结束", body: "「\(session.displayTitle)」已退出", sound: true)
+
+            case .blocked where session.isActive:
                 startFlash(2, rounds: 4)
                 notify("Claude → 等待确认", body: "「\(session.displayTitle)」需要你的操作")
 
-            case .error:
+            case .error where session.isActive:
                 startFlash(1, rounds: 5)
                 notify("Claude → 出错", body: "「\(session.displayTitle)」")
 
-            case .idle where oldIsBusy:
-                startFlash(4, rounds: 1)
-                notify("Claude → 完成", body: "「\(session.displayTitle)」", sound: false)
+            case .idle where oldIsBusy && session.isActive:
+                startFlash(4, rounds: 3)
+                notify("Claude → 完成", body: "「\(session.displayTitle)」", sound: true)
 
             case .thinking, .working:
-                if !oldIsBusy || isNewSession {
-                    startFlash(2, rounds: isNewSession ? 2 : 1)
-                    notify("Claude → 执行中", body: "「\(session.displayTitle)」开始 \(session.currentTask)", sound: false)
+                guard session.isActive else { continue }
+                if !oldIsBusy {
+                    startFlash(2, rounds: 2)
+                    notify("Claude → 执行中", body: "「\(session.displayTitle)」\(session.currentTask)", sound: false)
                 }
 
             default: break
@@ -214,137 +218,148 @@ struct FloatingWindowView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // ── Session cards with prominent traffic lights ──
+            // ── Drag handle (no title bar) ──
+            HStack {
+                Spacer()
+                Button(action: { onMenuBarOnly() }) {
+                    Image(systemName: "minus").font(.system(size: 10, weight: .bold))
+                }
+                .buttonStyle(.plain).foregroundColor(.secondary.opacity(0.5))
+                .help("Minimize to menu bar")
+            }
+            .padding(.horizontal, 8).padding(.top, 6)
+
+            // ── Session cards ──
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 8) {
                     ForEach(monitor.filteredSessions) { session in
-                        FloatingSessionCard(session: session)
+                        CompactSessionCard(session: session)
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
             }
 
             Divider()
 
             // ── Bottom bar ──
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Button(action: { monitor.refresh() }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                        Text("Refresh").font(.system(size: 10))
-                    }
+                    Image(systemName: "arrow.clockwise").font(.system(size: 11))
+                }
+                .buttonStyle(.plain).foregroundColor(.secondary)
+                .help("Refresh")
+
+                Button(action: {
+                    alwaysOnTop.toggle()
+                }) {
+                    Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
+                        .font(.system(size: 11))
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-
-                Toggle("Always on Top", isOn: $alwaysOnTop)
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 10))
+                .foregroundColor(alwaysOnTop ? .orange : .secondary)
+                .help(alwaysOnTop ? "Unpin from top" : "Always on top")
 
                 Spacer()
 
-                Button("Menu Bar Only") { onMenuBarOnly() }
-                    .buttonStyle(.plain).font(.system(size: 10))
                 Button("Quit") { NSApplication.shared.terminate(nil) }
                     .buttonStyle(.plain).font(.system(size: 10)).foregroundColor(.secondary)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12).padding(.vertical, 6)
         }
+        .frame(minWidth: 260, maxWidth: 320, minHeight: 200, maxHeight: 500)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { syncWindowLevel() }
         .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
     }
 
     private func syncWindowLevel() {
-        guard let window = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
-        window.level = alwaysOnTop ? .floating : .normal
+        guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
+        win.level = alwaysOnTop ? .floating : .normal
     }
 }
 
-// MARK: - Floating session card (prominent traffic light)
+// MARK: - Compact session card
 
-struct FloatingSessionCard: View {
+struct CompactSessionCard: View {
     let session: SessionInfo
 
     var body: some View {
-        HStack(spacing: 12) {
-            // ── Prominent traffic light ──
-            VStack(spacing: 4) {
+        HStack(spacing: 10) {
+            // ── Big traffic light ──
+            VStack(spacing: 3) {
                 Circle()
                     .fill(session.status == .error ? Color.red : Color.red.opacity(0.12))
-                    .frame(width: 16, height: 16)
-                    .shadow(color: session.status == .error ? .red.opacity(0.6) : .clear, radius: 6)
+                    .frame(width: 14, height: 14)
+                    .shadow(color: session.status == .error ? .red.opacity(0.5) : .clear, radius: 4)
                 Circle()
                     .fill((session.status == .thinking || session.status == .blocked) ? Color.yellow : Color.yellow.opacity(0.12))
-                    .frame(width: 16, height: 16)
-                    .shadow(color: (session.status == .thinking || session.status == .blocked) ? .yellow.opacity(0.6) : .clear, radius: 6)
+                    .frame(width: 14, height: 14)
+                    .shadow(color: (session.status == .thinking || session.status == .blocked) ? .yellow.opacity(0.5) : .clear, radius: 4)
                 Circle()
                     .fill((session.status == .working || session.status == .idle) ? Color.green : Color.green.opacity(0.12))
-                    .frame(width: 16, height: 16)
-                    .shadow(color: (session.status == .working || session.status == .idle) ? .green.opacity(0.6) : .clear, radius: 6)
+                    .frame(width: 14, height: 14)
+                    .shadow(color: (session.status == .working || session.status == .idle) ? .green.opacity(0.5) : .clear, radius: 4)
             }
-            .padding(8)
+            .padding(6)
             .background(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(Color(nsColor: .controlBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-                    )
             )
 
-            // ── Session info ──
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(session.displayTitle)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-
-                    if session.isActive {
-                        Circle().fill(Color.green)
-                            .frame(width: 6, height: 6)
-                    }
-                }
-
+            // ── Info ──
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.displayTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
                 if !session.currentTask.isEmpty {
                     Text(session.currentTask)
-                        .font(.system(size: 10))
+                        .font(.system(size: 9))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
-                } else {
-                    Text(session.status.displayLabel)
-                        .font(.system(size: 10))
-                        .foregroundColor(statusColor)
                 }
             }
 
             Spacer()
 
-            // ── Meta ──
+            // ── Status badge ──
             VStack(alignment: .trailing, spacing: 2) {
-                Text(session.status.displayLabel)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(statusColor)
+                HStack(spacing: 3) {
+                    Circle().fill(statusDot).frame(width: 5, height: 5)
+                    Text(shortLabel)
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundColor(statusColor)
                 Text(session.elapsedText)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Text("\(session.toolCallCount) tools")
                     .font(.system(size: 9))
-                    .foregroundColor(.secondary.opacity(0.7))
+                    .foregroundColor(.secondary)
             }
         }
-        .padding(12)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.primary.opacity(0.02))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-                )
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.primary.opacity(0.03))
         )
+    }
+
+    private var statusDot: Color {
+        switch session.status {
+        case .idle, .working: return .green
+        case .thinking, .blocked: return .yellow
+        case .error: return .red
+        case .stopped: return .gray
+        }
+    }
+
+    private var shortLabel: String {
+        switch session.status {
+        case .idle: return "idle"
+        case .thinking: return "thinking"
+        case .working: return "running"
+        case .blocked: return "blocked"
+        case .error: return "error"
+        case .stopped: return "done"
+        }
     }
 
     private var statusColor: Color {
