@@ -27,7 +27,16 @@ swiftc \
 APP_DIR="build/ClaudeTrafficLight.app"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Resources"
 cp build/ClaudeTrafficLight "$APP_DIR/Contents/MacOS/"
+
+# Generate app icon if not exists
+if [ ! -f build/AppIcon.icns ]; then
+    echo "Generating AppIcon.icns..."
+    swift gen_icns.swift 2>/dev/null
+    cp /tmp/CTL.icns build/AppIcon.icns 2>/dev/null || true
+fi
+cp build/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns" 2>/dev/null || true
 
 cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -50,6 +59,8 @@ cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>
 PLIST
