@@ -6,7 +6,6 @@ import AppKit
 // ═══════════════════════════════════════════════════════════════════════
 
 let sharedMonitor = SessionMonitor()
-var gAutoExpandEnabled = true  // toggle in popover
 
 extension Notification.Name {
     static let CTLExpandWindow = Notification.Name("CTLExpandWindow")
@@ -243,10 +242,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // Auto-expand on important events (if enabled)
-        if shouldExpand && gAutoExpandEnabled {
-            NotificationCenter.default.post(name: .CTLExpandWindow, object: nil,
-                                            userInfo: ["sessionId": changes.last?.0.id ?? ""])
+        // Auto-expand collapsed window on important events
+        if shouldExpand {
+            NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
         }
     }
 }
@@ -280,17 +278,11 @@ struct FloatingWindowView: View {
             .padding(4)
             .onAppear { syncWindowLevel(); startSnapMonitor() }
             .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
-            .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { n in
+            .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { _ in
                 if isCollapsed { expand() }
-                // Auto-expand the specific session that triggered the event
-                if gAutoExpandEnabled, let sid = n.userInfo?["sessionId"] as? String, !sid.isEmpty {
-                    monitor.expandSession(sid)
-                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
                 isCollapsed = true
-                monitor.expandedSessionIds.removeAll()
-                monitor.objectWillChange.send()
             }
             .onHover { handleHover($0) }
     }
@@ -415,10 +407,6 @@ struct FloatingWindowView: View {
     private func expand() {
         guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
               let screen = win.screen else { return }
-        // Expand sessions BEFORE window, so cards render expanded
-        for s in monitor.filteredSessions {
-            monitor.expandedSessionIds.insert(s.id)
-        }
         isCollapsed = false
         resizeWindow(to: contentHeight, width: expandedWidth)
         var frame = win.frame; let sf = screen.visibleFrame
@@ -552,16 +540,11 @@ struct VisualEffectView: NSViewRepresentable {
 // MARK: - Glass session card (prominent lights, compact)
 
 struct GlassSessionCard: View {
-    @ObservedObject var monitor = sharedMonitor
     let session: SessionInfo
-
-    private var isExpanded: Bool {
-        monitor.expandedSessionIds.contains(session.id)
-    }
 
     var body: some View {
         HStack(spacing: 10) {
-            // ── Traffic light (always visible, same position) ──
+            // ── Traffic light ──
             VStack(spacing: 4) {
                 BreathingDot(color: .red, active: session.status == .error, size: 18)
                 BreathingDot(color: .yellow, active: session.status == .thinking || session.status == .blocked, size: 18)
@@ -573,35 +556,28 @@ struct GlassSessionCard: View {
                     .fill(Color.primary.opacity(0.06))
             )
 
-            if isExpanded {
-                // ── Session name + task ──
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.displayTitle)
-                        .font(.system(size: 13, weight: .bold))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !session.currentTask.isEmpty {
-                        Text(session.currentTask)
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary.opacity(0.7))
-                            .lineLimit(1)
-                    }
+            // ── Session name + task ──
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.displayTitle)
+                    .font(.system(size: 13, weight: .bold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !session.currentTask.isEmpty {
+                    Text(session.currentTask)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.7))
+                        .lineLimit(1)
                 }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-
-                Spacer()
             }
+
+            Spacer()
         }
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.primary.opacity(0.04))
         )
-        .animation(.easeInOut(duration: 0.2), value: isExpanded)
         .contextMenu {
-            Button(isExpanded ? "Collapse" : "Expand") {
-                monitor.toggleSessionExpand(session.id)
-            }
             Button("Copy Session ID") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(session.id, forType: .string)
@@ -613,11 +589,7 @@ struct GlassSessionCard: View {
             }
         }
         .onTapGesture {
-            if session.status == .idle {
-                sharedMonitor.dismissCompleted(session.id)
-            } else {
-                monitor.toggleSessionExpand(session.id)
-            }
+            sharedMonitor.dismissCompleted(session.id)
         }
     }
 }

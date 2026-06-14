@@ -114,32 +114,20 @@ struct PopoverView: View {
 
     // MARK: - Bottom bar
 
-    @State private var autoExpand = gAutoExpandEnabled
-
     private var bottomBar: some View {
-        VStack(spacing: 2) {
-            HStack {
-                Toggle("Auto Expand", isOn: $autoExpand)
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.4))
-                    .onChange(of: autoExpand) { gAutoExpandEnabled = $0 }
-                Spacer()
-                Button("Open Window") { onShowFloating() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
-            }
-            HStack {
-                Spacer()
-                Button("Quit") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.3))
-            }
+        HStack {
+            Button("Open Window") { onShowFloating() }
+                .buttonStyle(.plain)
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.5))
+            Spacer()
+            Button("Quit") { NSApplication.shared.terminate(nil) }
+                .buttonStyle(.plain)
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.3))
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
     }
 
     private var emptyView: some View {
