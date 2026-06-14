@@ -8,7 +8,6 @@ import AppKit
 let sharedMonitor = SessionMonitor()
 
 extension Notification.Name {
-    static let CTLExpandWindow = Notification.Name("CTLExpandWindow")
     static let CTLSnapCollapse = Notification.Name("CTLSnapCollapse")
 }
 
@@ -16,7 +15,7 @@ extension Notification.Name {
 //  AppDelegate
 // ═══════════════════════════════════════════════════════════════════════
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var floatingWindow: NSWindow?
@@ -126,24 +125,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.setFrameAutosaveName("CTLFloating")
         window.contentView = hosting
         window.isReleasedWhenClosed = false
-        window.delegate = self
         floatingWindow = window
-    }
-
-    // MARK: - NSWindowDelegate
-
-    func windowDidMove(_ notification: Notification) {
-        guard let win = notification.object as? NSWindow,
-              win == floatingWindow else { return }
-        windowLastMoveTime = Date()
-
-        // Drag collapsed → auto-expand
-        if win.frame.width < 60 && !gSnapInProgress {
-            NSLog("[CTL] drag-expand triggered")
-            gSnapInProgress = true
-            NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { gSnapInProgress = false }
-        }
     }
 
     func showFloatingWindow() {
@@ -201,8 +183,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - Session change handler
 
     private func handleSessionChanges(_ changes: [(SessionInfo, SessionStatus)]) {
-        var shouldExpand = false
-
         for (session, oldStatus) in changes {
             let isBusy = { (s: SessionStatus) in s == .thinking || s == .working || s == .blocked }
             let newIsBusy = isBusy(session.status)
@@ -214,22 +194,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case .stopped where oldStatus != .stopped:
                 startFlash(4, rounds: 2)
                 notify("Claude → 会话结束", body: "「\(session.displayTitle)」已退出", sound: true)
-                shouldExpand = true
 
             case .blocked where session.isActive:
                 startFlash(2, rounds: 4)
                 notify("Claude → 等待确认", body: "「\(session.displayTitle)」需要你的操作")
-                shouldExpand = true
 
             case .error where session.isActive:
                 startFlash(1, rounds: 5)
                 notify("Claude → 出错", body: "「\(session.displayTitle)」")
-                shouldExpand = true
 
             case .idle where oldIsBusy && session.isActive:
                 startFlash(4, rounds: 3)
                 notify("Claude → 完成", body: "「\(session.displayTitle)」", sound: true)
-                shouldExpand = true
 
             case .thinking, .working:
                 guard session.isActive else { continue }
@@ -240,11 +216,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             default: break
             }
-        }
-
-        // Auto-expand collapsed window on important events
-        if shouldExpand {
-            NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
         }
     }
 }
@@ -278,9 +249,6 @@ struct FloatingWindowView: View {
             .padding(4)
             .onAppear { syncWindowLevel(); startSnapMonitor() }
             .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
-            .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { _ in
-                if isCollapsed { expand() }
-            }
             .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
                 isCollapsed = true
             }
@@ -393,6 +361,14 @@ struct FloatingWindowView: View {
 
     private func startSnapMonitor() {
         if windowSnapTimer == nil {
+            // Track window movement for snap debounce
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didMoveNotification, object: nil, queue: .main
+            ) { n in
+                guard let win = n.object as? NSWindow,
+                      win.title == "Claude Traffic Light" else { return }
+                windowLastMoveTime = Date()
+            }
             windowSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
                 DispatchQueue.main.async {
                     guard Date().timeIntervalSince(windowLastMoveTime) > 1.0 else { return }
