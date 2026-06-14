@@ -9,6 +9,7 @@ let sharedMonitor = SessionMonitor()
 
 extension Notification.Name {
     static let CTLExpandWindow = Notification.Name("CTLExpandWindow")
+    static let CTLSnapCollapse = Notification.Name("CTLSnapCollapse")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -266,6 +267,9 @@ struct FloatingWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { _ in
             if isCollapsed { expand() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
+            isCollapsed = true
+        }
     }
 
     // MARK: - Expanded view
@@ -382,44 +386,25 @@ struct FloatingWindowView: View {
     // MARK: - Snap monitor
 
     private func startSnapMonitor() {
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            DispatchQueue.main.async { checkSnap() }
+        // Use a single shared observer (setup once)
+        if windowSnapTimer == nil {
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didMoveNotification, object: nil, queue: .main
+            ) { n in
+                guard let win = n.object as? NSWindow,
+                      win.title == "Claude Traffic Light" else { return }
+                windowLastMoveTime = Date()
+            }
+            windowSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
+                DispatchQueue.main.async {
+                    guard Date().timeIntervalSince(windowLastMoveTime) > 1.0 else { return }
+                    checkSnapGlobal()
+                }
+            }
         }
     }
 
-    private func checkSnap() {
-        guard !isCollapsed, let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
-              let screen = win.screen else { return }
-
-        let frame = win.frame
-        let screenFrame = screen.visibleFrame
-        let leftDist = frame.minX - screenFrame.minX
-        let rightDist = screenFrame.maxX - frame.maxX
-
-        if leftDist < snapThreshold {
-            snapEdge = .leading
-            collapse(to: .leading, screen: screenFrame)
-        } else if rightDist < snapThreshold {
-            snapEdge = .trailing
-            collapse(to: .trailing, screen: screenFrame)
-        }
-    }
-
-    private func collapse(to edge: UnitPoint, screen: CGRect) {
-        isCollapsed = true
-        resizeWindow(to: contentHeight, width: collapsedWidth)
-
-        guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
-        var frame = win.frame
-        if edge == .leading {
-            frame.origin.x = screen.minX
-        } else {
-            frame.origin.x = screen.maxX - collapsedWidth - 8
-        }
-        // Center vertically
-        frame.origin.y = screen.midY - frame.height / 2
-        win.setFrame(frame, display: true, animate: true)
-    }
+    // MARK: - Expand / resize helpers
 
     private func expand() {
         guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
@@ -431,7 +416,6 @@ struct FloatingWindowView: View {
 
         var frame = win.frame
         let screenFrame = screen.visibleFrame
-        // Slide out from the edge
         if frame.minX < screenFrame.midX {
             frame.origin.x = screenFrame.minX + 8
         } else {
@@ -440,8 +424,6 @@ struct FloatingWindowView: View {
         frame.origin.y = screenFrame.midY - frame.height / 2
         win.setFrame(frame, display: true, animate: true)
     }
-
-    // MARK: - Window resize
 
     private func resizeWindow(to height: CGFloat, width: CGFloat) {
         guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
@@ -458,6 +440,45 @@ struct FloatingWindowView: View {
         win.level = alwaysOnTop ? .floating : .normal
     }
 }
+
+// Global snap state (survives view re-renders)
+private var windowLastMoveTime: Date = .distantPast
+private var windowSnapTimer: Timer?
+
+private func checkSnapGlobal() {
+    guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
+          let screen = win.screen else { return }
+
+    let frame = win.frame
+    let screenFrame = screen.visibleFrame
+    let leftDist = frame.minX - screenFrame.minX
+    let rightDist = screenFrame.maxX - frame.maxX
+
+    // Don't snap if window is already very thin (likely collapsed)
+    if frame.width < 100 { return }
+
+    if leftDist < 40 && leftDist > -20 {
+        snapWindow(to: .leading, win: win, screen: screenFrame)
+    } else if rightDist < 40 && rightDist > -20 {
+        snapWindow(to: .trailing, win: win, screen: screenFrame)
+    }
+}
+
+private func snapWindow(to edge: UnitPoint, win: NSWindow, screen: CGRect) {
+    let collapsedW: CGFloat = 52
+    var frame = win.frame
+    if edge == .leading {
+        frame.origin.x = screen.minX
+    } else {
+        frame.origin.x = screen.maxX - collapsedW - 8
+    }
+    frame.size.width = collapsedW
+    frame.origin.y = screen.midY - frame.height / 2
+    win.setFrame(frame, display: true, animate: true)
+    // Notify the view to update its collapsed state
+    NotificationCenter.default.post(name: .CTLSnapCollapse, object: nil)
+}
+
 
 // MARK: - Preference key for content height
 
