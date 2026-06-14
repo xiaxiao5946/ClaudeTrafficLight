@@ -23,11 +23,16 @@ class SessionMonitor: ObservableObject {
     private var previousStatuses: [String: SessionStatus] = [:]
 
     var filteredSessions: [SessionInfo] {
-        let live = sessions.filter { $0.isActive || $0.pinned }
+        // Pinned = always shown. Unpinned = only shown when busy (not idle/stopped).
+        let visible = sessions.filter { s in
+            if s.pinned { return true }
+            guard s.isActive else { return false }
+            return s.status == .thinking || s.status == .working || s.status == .blocked || s.status == .error
+        }
         switch filterMode {
-        case .all: return live
-        case .active: return live.filter { $0.isActive }
-        case .pinned: return live.filter { $0.pinned }
+        case .all: return visible
+        case .active: return visible.filter { $0.isActive && $0.status != .idle }
+        case .pinned: return visible.filter { $0.pinned }
         }
     }
 
