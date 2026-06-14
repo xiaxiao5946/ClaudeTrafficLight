@@ -69,6 +69,59 @@ enum TrafficLightIcon {
         return image
     }
 
+    /// App icon: traffic light + "CC" monogram
+    static func drawAppIcon() -> NSImage {
+        let size = NSSize(width: 256, height: 256)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        // Background: rounded rect, dark
+        let bg = NSBezierPath(roundedRect: NSRect(x: 8, y: 8, width: 240, height: 240),
+                              xRadius: 48, yRadius: 48)
+        NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1.0).setFill()
+        bg.fill()
+
+        // Subtle border
+        NSColor.white.withAlphaComponent(0.08).setStroke()
+        bg.lineWidth = 2
+        bg.stroke()
+
+        // Traffic light dots — large, on the left
+        let dotR: CGFloat = 28
+        let cx: CGFloat = 88
+        let ys: [CGFloat] = [180, 128, 76]
+        let onColors: [(CGFloat, CGFloat, CGFloat)] = [
+            (1.0, 0.15, 0.15), (1.0, 0.78, 0.0), (0.15, 0.88, 0.25)
+        ]
+
+        for i in 0..<3 {
+            // Glow
+            let glow = NSBezierPath(ovalIn: NSRect(x: cx - dotR - 4, y: ys[i] - dotR - 4,
+                                                    width: dotR*2 + 8, height: dotR*2 + 8))
+            NSColor(red: onColors[i].0, green: onColors[i].1, blue: onColors[i].2, alpha: 0.10).setFill()
+            glow.fill()
+
+            // Dot
+            let dot = NSBezierPath(ovalIn: NSRect(x: cx - dotR, y: ys[i] - dotR,
+                                                   width: dotR*2, height: dotR*2))
+            NSColor(red: onColors[i].0, green: onColors[i].1, blue: onColors[i].2, alpha: 1.0).setFill()
+            dot.fill()
+        }
+
+        // "CC" lettering on the right
+        let ccText = "CC"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 72, weight: .bold),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.9)
+        ]
+        let ts = (ccText as NSString).size(withAttributes: attrs)
+        (ccText as NSString).draw(at: NSPoint(x: 156 + (72 - ts.width) / 2, y: (256 - ts.height) / 2),
+                                   withAttributes: attrs)
+
+        image.unlockFocus()
+        return image
+    }
+
     /// Larger square icon for notifications
     static func drawNotificationIcon(state: State) -> NSImage {
         let size = NSSize(width: 48, height: 48)
