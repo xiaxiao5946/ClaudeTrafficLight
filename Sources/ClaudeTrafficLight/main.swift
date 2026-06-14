@@ -16,7 +16,7 @@ extension Notification.Name {
 //  AppDelegate
 // ═══════════════════════════════════════════════════════════════════════
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var floatingWindow: NSWindow?
@@ -126,7 +126,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("CTLFloating")
         window.contentView = hosting
         window.isReleasedWhenClosed = false
+        window.delegate = self
         floatingWindow = window
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowDidMove(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow,
+              win == floatingWindow else { return }
+        windowLastMoveTime = Date()
+
+        // Drag collapsed → auto-expand
+        if win.frame.width < 60 && !gSnapInProgress {
+            NSLog("[CTL] drag-expand triggered")
+            gSnapInProgress = true
+            NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { gSnapInProgress = false }
+        }
     }
 
     func showFloatingWindow() {
@@ -249,55 +266,50 @@ struct FloatingWindowView: View {
     private let snapThreshold: CGFloat = 40
 
     var body: some View {
+        mainContent
+            .background(
+                VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                    .overlay(Color.black.opacity(0.08))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: isCollapsed ? 10 : 14))
+            .overlay(strokeBorder)
+            .padding(4)
+            .onAppear { syncWindowLevel(); startSnapMonitor() }
+            .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
+            .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { _ in
+                if isCollapsed { expand() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
+                isCollapsed = true
+            }
+            .onHover { handleHover($0) }
+    }
+
+    private var mainContent: some View {
         Group {
-            if isCollapsed {
-                collapsedView
-            } else {
-                expandedView
-            }
+            if isCollapsed { collapsedView } else { expandedView }
         }
-        .background(
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                .overlay(Color.black.opacity(0.08))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: isCollapsed ? 10 : 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: isCollapsed ? 10 : 14)
-                .stroke(Color.white.opacity(isCollapsed ? 0.06 : 0.1), lineWidth: 0.5)
-        )
-        .padding(4)
-        .onAppear {
-            syncWindowLevel()
-            startSnapMonitor()
-        }
-        .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
-        .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { _ in
-            if isCollapsed { expand() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
-            isCollapsed = true
-        }
-        .onHover { inside in
-            gHoverInside = inside
-            if !inside && !isCollapsed {
-                gHoverLeaveTime = Date()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    guard !gHoverInside,
-                          Date().timeIntervalSince(gHoverLeaveTime) >= 1.4,
-                          let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
-                          let screen = win.screen else { return }
-                    let frame = win.frame
-                    let sf = screen.visibleFrame
-                    let leftDist = frame.minX - sf.minX
-                    let rightDist = sf.maxX - frame.maxX
-                    // Use wider threshold (100px) for auto-collapse, not the tight 40px snap
-                    if leftDist < 100 {
-                        snapWindow(to: .leading, win: win, screen: sf)
-                    } else if rightDist < 100 {
-                        snapWindow(to: .trailing, win: win, screen: sf)
-                    }
-                }
-            }
+    }
+
+    private var strokeBorder: some View {
+        RoundedRectangle(cornerRadius: isCollapsed ? 10 : 14)
+            .stroke(Color.white.opacity(isCollapsed ? 0.06 : 0.1), lineWidth: 0.5)
+    }
+
+    private func handleHover(_ inside: Bool) {
+        gHoverInside = inside
+        guard !inside, !isCollapsed else { return }
+        gHoverLeaveTime = Date()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            guard !gHoverInside,
+                  Date().timeIntervalSince(gHoverLeaveTime) >= 1.4,
+                  let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
+                  let screen = win.screen else { return }
+            let sf = screen.visibleFrame
+            let leftDist = win.frame.minX - sf.minX
+            let rightDist = sf.maxX - win.frame.maxX
+            if leftDist < 100 { snapWindow(to: .leading, win: win, screen: sf) }
+            else if rightDist < 100 { snapWindow(to: .trailing, win: win, screen: sf) }
         }
     }
 
@@ -382,6 +394,8 @@ struct FloatingWindowView: View {
 
     // MARK: - Collapsed view (just traffic light strip)
 
+    @State private var showTooltip = false
+
     private var collapsedView: some View {
         VStack(spacing: 6) {
             // Mini traffic light — only light up when actually busy
@@ -423,11 +437,22 @@ struct FloatingWindowView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { expand() }
-        .help(
-            monitor.filteredSessions.isEmpty
-                ? "No sessions"
-                : monitor.filteredSessions.map { "\($0.status.emoji) \($0.displayTitle)" }.joined(separator: "\n")
-        )
+        .onHover { showTooltip = $0 }
+        .overlay(alignment: .leading) {
+            if showTooltip && !monitor.filteredSessions.isEmpty {
+                let tip = monitor.filteredSessions.map { "\($0.status.emoji) \($0.displayTitle)" }.joined(separator: "\n")
+                Text(tip)
+                    .font(.system(size: 10))
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.black.opacity(0.85))
+                    )
+                    .offset(x: collapsedWidth + 4)
+                    .fixedSize()
+            }
+        }
     }
 
     // MARK: - Snap monitor
@@ -435,20 +460,6 @@ struct FloatingWindowView: View {
     private func startSnapMonitor() {
         // Use a single shared observer (setup once)
         if windowSnapTimer == nil {
-            NotificationCenter.default.addObserver(
-                forName: NSWindow.didMoveNotification, object: nil, queue: .main
-            ) { n in
-                guard let win = n.object as? NSWindow,
-                      win.title == "Claude Traffic Light" else { return }
-                windowLastMoveTime = Date()
-                // Drag-collapsed → auto-expand
-                if win.frame.width < 60 && !gSnapInProgress {
-                    NSLog("[CTL] drag-expand: width=\(win.frame.width) snapInProgress=\(gSnapInProgress)")
-                    gSnapInProgress = true  // block snap during expand
-                    NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { gSnapInProgress = false }
-                }
-            }
             windowSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
                 DispatchQueue.main.async {
                     guard Date().timeIntervalSince(windowLastMoveTime) > 1.0 else { return }
