@@ -281,10 +281,21 @@ struct FloatingWindowView: View {
             gHoverInside = inside
             if !inside && !isCollapsed {
                 gHoverLeaveTime = Date()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     guard !gHoverInside,
-                          Date().timeIntervalSince(gHoverLeaveTime) >= 1.9 else { return }
-                    checkSnapGlobal()
+                          Date().timeIntervalSince(gHoverLeaveTime) >= 1.4,
+                          let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
+                          let screen = win.screen else { return }
+                    let frame = win.frame
+                    let sf = screen.visibleFrame
+                    let leftDist = frame.minX - sf.minX
+                    let rightDist = sf.maxX - frame.maxX
+                    // Use wider threshold (100px) for auto-collapse, not the tight 40px snap
+                    if leftDist < 100 {
+                        snapWindow(to: .leading, win: win, screen: sf)
+                    } else if rightDist < 100 {
+                        snapWindow(to: .trailing, win: win, screen: sf)
+                    }
                 }
             }
         }
