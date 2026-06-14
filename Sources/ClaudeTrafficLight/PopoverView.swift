@@ -87,6 +87,7 @@ struct PopoverView: View {
                         )
                         .onTapGesture {
                             monitor.selectedSessionId = session.id
+                            monitor.dismissCompleted(session.id)
                         }
                         .contextMenu {
                             Button(monitor.pinnedIds.contains(session.id) ? "Unpin" : "Pin") {

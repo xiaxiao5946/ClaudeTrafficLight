@@ -170,6 +170,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         note.title = title
         note.informativeText = body
         note.soundName = sound ? NSUserNotificationDefaultSoundName : nil
+        // Traffic light icon in notification
+        note.contentImage = TrafficLightIcon.draw(state: .init(
+            redOn: sharedMonitor.activeStatusSummary.hasError,
+            yellowOn: sharedMonitor.activeStatusSummary.hasBlocked || sharedMonitor.activeStatusSummary.hasThinking,
+            greenOn: sharedMonitor.activeStatusSummary.hasWorking,
+            flashMask: 0
+        ))
         NSUserNotificationCenter.default.deliver(note)
         NSLog("[CTL] notified: \(title)")
     }
@@ -270,6 +277,17 @@ struct FloatingWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
             isCollapsed = true
         }
+        .onHover { inside in
+            gHoverInside = inside
+            if !inside && !isCollapsed {
+                gHoverLeaveTime = Date()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    guard !gHoverInside,
+                          Date().timeIntervalSince(gHoverLeaveTime) >= 1.9 else { return }
+                    checkSnapGlobal()
+                }
+            }
+        }
     }
 
     // MARK: - Expanded view
@@ -342,20 +360,24 @@ struct FloatingWindowView: View {
 
     private var collapsedView: some View {
         VStack(spacing: 6) {
-            // Mini traffic light
-            let s = monitor.activeStatusSummary
+            // Mini traffic light — only light up when actually busy
+            let active = monitor.sessions.filter { $0.isActive }
+            let hasErr = active.contains { $0.status == .error }
+            let hasBlock = active.contains { $0.status == .blocked }
+            let hasThink = active.contains { $0.status == .thinking }
+            let hasWork = active.contains { $0.status == .working }
             Circle()
-                .fill(s.hasError ? Color.red : Color.red.opacity(0.12))
+                .fill(hasErr ? Color.red : Color.red.opacity(0.12))
                 .frame(width: 12, height: 12)
-                .shadow(color: s.hasError ? .red.opacity(0.7) : .clear, radius: 6)
+                .shadow(color: hasErr ? .red.opacity(0.7) : .clear, radius: 6)
             Circle()
-                .fill(s.hasBlocked || s.hasThinking ? Color.yellow : Color.yellow.opacity(0.12))
+                .fill(hasBlock || hasThink ? Color.yellow : Color.yellow.opacity(0.12))
                 .frame(width: 12, height: 12)
-                .shadow(color: s.hasBlocked || s.hasThinking ? .yellow.opacity(0.7) : .clear, radius: 6)
+                .shadow(color: hasBlock || hasThink ? .yellow.opacity(0.7) : .clear, radius: 6)
             Circle()
-                .fill(s.hasWorking ? Color.green : Color.green.opacity(0.12))
+                .fill(hasWork ? Color.green : Color.green.opacity(0.12))
                 .frame(width: 12, height: 12)
-                .shadow(color: s.hasWorking ? .green.opacity(0.7) : .clear, radius: 6)
+                .shadow(color: hasWork ? .green.opacity(0.7) : .clear, radius: 6)
 
             // Expand button
             Button(action: { expand() }) {
@@ -444,6 +466,8 @@ struct FloatingWindowView: View {
 // Global snap state (survives view re-renders)
 private var windowLastMoveTime: Date = .distantPast
 private var windowSnapTimer: Timer?
+private var gHoverInside = false
+private var gHoverLeaveTime: Date = .distantFuture
 
 private func checkSnapGlobal() {
     guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
@@ -563,6 +587,14 @@ struct GlassSessionCard: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(session.id, forType: .string)
             }
+            if session.status == .idle {
+                Button("Dismiss") {
+                    sharedMonitor.dismissCompleted(session.id)
+                }
+            }
+        }
+        .onTapGesture {
+            sharedMonitor.dismissCompleted(session.id)
         }
     }
 }

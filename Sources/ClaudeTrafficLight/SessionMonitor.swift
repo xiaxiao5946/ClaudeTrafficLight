@@ -8,6 +8,8 @@ class SessionMonitor: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var selectedSessionId: String?
     @Published var filterMode: FilterMode = .all
+    private var dismissedIds: Set<String> = []
+    private var justCompletedIds: Set<String> = []  // show until user clicks
 
     enum FilterMode: String, CaseIterable {
         case all = "全部"
@@ -23,17 +25,25 @@ class SessionMonitor: ObservableObject {
     private var previousStatuses: [String: SessionStatus] = [:]
 
     var filteredSessions: [SessionInfo] {
-        // Pinned = always shown. Unpinned = only shown when busy (not idle/stopped).
+        // Pinned = always shown. Unpinned = only when busy OR just completed (not yet dismissed).
         let visible = sessions.filter { s in
             if s.pinned { return true }
+            if justCompletedIds.contains(s.id) { return true }
             guard s.isActive else { return false }
             return s.status == .thinking || s.status == .working || s.status == .blocked || s.status == .error
         }
         switch filterMode {
         case .all: return visible
-        case .active: return visible.filter { $0.isActive && $0.status != .idle }
+        case .active: return visible.filter { $0.isActive && $0.status != .idle && !justCompletedIds.contains($0.id) }
         case .pinned: return visible.filter { $0.pinned }
         }
+    }
+
+    /// Dismiss a just-completed session (removes it from the list if not pinned)
+    func dismissCompleted(_ sessionId: String) {
+        justCompletedIds.remove(sessionId)
+        dismissedIds.insert(sessionId)
+        objectWillChange.send()
     }
 
     var activeStatusSummary: (hasError: Bool, hasBlocked: Bool, hasThinking: Bool, hasWorking: Bool) {
@@ -77,6 +87,11 @@ class SessionMonitor: ObservableObject {
                     let old = oldStatuses[s.id] ?? .stopped
                     if s.status != old && s.isActive {
                         changes.append((s, old))
+                    }
+                    // Track just-completed: busy → idle
+                    let oldBusy = old == .thinking || old == .working || old == .blocked
+                    if s.status == .idle && oldBusy && s.isActive && !self.justCompletedIds.contains(s.id) {
+                        self.justCompletedIds.insert(s.id)
                     }
                     self.previousStatuses[s.id] = s.status
                 }
