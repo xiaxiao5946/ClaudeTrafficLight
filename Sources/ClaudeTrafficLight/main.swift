@@ -319,15 +319,28 @@ struct FloatingWindowView: View {
                 }
                 .frame(height: 80)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 6) {
-                        ForEach(monitor.filteredSessions) { session in
+                let list = monitor.filteredSessions
+                if list.count <= 4 {
+                    // Auto-fit — no scroll needed
+                    VStack(spacing: 6) {
+                        ForEach(list) { session in
                             GlassSessionCard(session: session)
                         }
                     }
                     .padding(.horizontal, 6)
                     .padding(.top, 4)
                     .padding(.bottom, 4)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 6) {
+                            ForEach(list) { session in
+                                GlassSessionCard(session: session)
+                            }
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.top, 4)
+                        .padding(.bottom, 4)
+                    }
                 }
             }
 
@@ -410,6 +423,11 @@ struct FloatingWindowView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { expand() }
+        .help(
+            monitor.filteredSessions.isEmpty
+                ? "No sessions"
+                : monitor.filteredSessions.map { "\($0.status.emoji) \($0.displayTitle)" }.joined(separator: "\n")
+        )
     }
 
     // MARK: - Snap monitor
@@ -423,6 +441,10 @@ struct FloatingWindowView: View {
                 guard let win = n.object as? NSWindow,
                       win.title == "Claude Traffic Light" else { return }
                 windowLastMoveTime = Date()
+                // Drag-collapsed → auto-expand (unless snap is in progress)
+                if win.frame.width < 60 && !gSnapInProgress {
+                    NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
+                }
             }
             windowSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
                 DispatchQueue.main.async {
@@ -479,6 +501,7 @@ private var windowLastMoveTime: Date = .distantPast
 private var windowSnapTimer: Timer?
 private var gHoverInside = false
 private var gHoverLeaveTime: Date = .distantFuture
+private var gSnapInProgress = false
 
 private func checkSnapGlobal() {
     guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
@@ -500,6 +523,7 @@ private func checkSnapGlobal() {
 }
 
 private func snapWindow(to edge: UnitPoint, win: NSWindow, screen: CGRect) {
+    gSnapInProgress = true
     let collapsedW: CGFloat = 52
     var frame = win.frame
     if edge == .leading {
@@ -510,8 +534,8 @@ private func snapWindow(to edge: UnitPoint, win: NSWindow, screen: CGRect) {
     frame.size.width = collapsedW
     frame.origin.y = screen.midY - frame.height / 2
     win.setFrame(frame, display: true, animate: true)
-    // Notify the view to update its collapsed state
     NotificationCenter.default.post(name: .CTLSnapCollapse, object: nil)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { gSnapInProgress = false }
 }
 
 
