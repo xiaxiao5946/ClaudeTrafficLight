@@ -217,20 +217,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 struct FloatingWindowView: View {
     @ObservedObject var monitor: SessionMonitor
     var onMenuBarOnly: () -> Void
-    @State private var alwaysOnTop = true  // default ON since window starts floating
+    @State private var alwaysOnTop = true
+    @State private var contentHeight: CGFloat = 120
 
     var body: some View {
         VStack(spacing: 0) {
-            // ── Session cards ──
-            ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(monitor.filteredSessions) { session in
-                        GlassSessionCard(session: session)
-                    }
+            if monitor.filteredSessions.isEmpty {
+                // ── Empty state ──
+                VStack(spacing: 6) {
+                    Image(systemName: "circle.dotted")
+                        .font(.system(size: 20))
+                        .foregroundColor(.secondary.opacity(0.4))
+                    Text("No active sessions")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary.opacity(0.6))
+                    Text("Pin a session to always see it here")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.4))
                 }
-                .padding(.horizontal, 6)
-                .padding(.top, 4)
-                .padding(.bottom, 4)
+                .frame(height: 80)
+            } else {
+                // ── Session cards ──
+                ScrollView {
+                    LazyVStack(spacing: 6) {
+                        ForEach(monitor.filteredSessions) { session in
+                            GlassSessionCard(session: session)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.top, 4)
+                    .padding(.bottom, 4)
+                }
             }
 
             // ── Bottom bar ──
@@ -256,7 +273,8 @@ struct FloatingWindowView: View {
             }
             .padding(.horizontal, 8).padding(.bottom, 6)
         }
-        .frame(minWidth: 200, maxWidth: 280, minHeight: 120, maxHeight: 500)
+        .frame(minWidth: 200, maxWidth: 280)
+        .frame(height: contentHeight)
         .background(
             VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
                 .overlay(Color.black.opacity(0.08))
@@ -266,14 +284,45 @@ struct FloatingWindowView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
         )
-        .padding(4)  // give shadow room
+        .padding(4)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: ContentHeightKey.self,
+                                        value: geo.size.height)
+            }
+        )
+        .onPreferenceChange(ContentHeightKey.self) { h in
+            contentHeight = h
+            resizeWindow(to: h)
+        }
         .onAppear { syncWindowLevel() }
         .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
+        .onChange(of: monitor.filteredSessions.count) { _ in
+            // Trigger re-measure on session count change
+        }
+    }
+
+    private func resizeWindow(to height: CGFloat) {
+        guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
+        let targetH = max(100, min(500, height + 8))
+        var frame = win.frame
+        frame.origin.y += frame.height - targetH
+        frame.size.height = targetH
+        win.setFrame(frame, display: true, animate: true)
     }
 
     private func syncWindowLevel() {
         guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
         win.level = alwaysOnTop ? .floating : .normal
+    }
+}
+
+// MARK: - Preference key for content height
+
+struct ContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 120
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -329,7 +378,8 @@ struct GlassSessionCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.displayTitle)
                     .font(.system(size: 13, weight: .bold))
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 if !session.currentTask.isEmpty {
                     Text(session.currentTask)
                         .font(.system(size: 9))
