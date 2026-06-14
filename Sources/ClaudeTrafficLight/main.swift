@@ -359,15 +359,16 @@ struct FloatingWindowView: View {
     // MARK: - Collapsed view (per-session lights)
 
     private var collapsedView: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             if monitor.filteredSessions.isEmpty {
-                CollapsedLight(red: false, yellow: false, green: false)
+                CollapsedLight(red: false, yellow: false, green: false, dot: 10)
             } else {
                 ForEach(monitor.filteredSessions) { session in
                     CollapsedLight(
                         red: session.status == .error,
                         yellow: session.status == .thinking || session.status == .blocked,
-                        green: session.status == .working
+                        green: session.status == .working,
+                        dot: 10
                     )
                 }
             }
@@ -375,7 +376,7 @@ struct FloatingWindowView: View {
                 Image(systemName: "arrowtriangle.forward.fill").font(.system(size: 5)).foregroundColor(.secondary.opacity(0.3))
             }.buttonStyle(.plain)
         }
-        .padding(.vertical, 6).padding(.horizontal, 6).frame(width: collapsedWidth)
+        .padding(.vertical, 6).padding(.horizontal, 8).frame(width: collapsedWidth)
         .onHover { inside in
             if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             showTooltip = inside
@@ -430,13 +431,14 @@ struct FloatingWindowView: View {
 
 struct CollapsedLight: View {
     let red: Bool, yellow: Bool, green: Bool
+    var dot: CGFloat = 8
     var body: some View {
-        HStack(spacing: 3) {
-            Circle().fill(red ? Color.red : Color.red.opacity(0.12)).frame(width: 8, height: 8)
+        VStack(spacing: 3) {
+            Circle().fill(red ? Color.red : Color.red.opacity(0.12)).frame(width: dot, height: dot)
                 .shadow(color: red ? .red.opacity(0.6) : .clear, radius: 4)
-            Circle().fill(yellow ? Color.yellow : Color.yellow.opacity(0.12)).frame(width: 8, height: 8)
+            Circle().fill(yellow ? Color.yellow : Color.yellow.opacity(0.12)).frame(width: dot, height: dot)
                 .shadow(color: yellow ? .yellow.opacity(0.6) : .clear, radius: 4)
-            Circle().fill(green ? Color.green : Color.green.opacity(0.12)).frame(width: 8, height: 8)
+            Circle().fill(green ? Color.green : Color.green.opacity(0.12)).frame(width: dot, height: dot)
                 .shadow(color: green ? .green.opacity(0.6) : .clear, radius: 4)
         }
     }
