@@ -7,6 +7,10 @@ import AppKit
 
 let sharedMonitor = SessionMonitor()
 
+extension Notification.Name {
+    static let CTLExpandWindow = Notification.Name("CTLExpandWindow")
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  AppDelegate
 // ═══════════════════════════════════════════════════════════════════════
@@ -172,6 +176,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Session change handler
 
     private func handleSessionChanges(_ changes: [(SessionInfo, SessionStatus)]) {
+        var shouldExpand = false
+
         for (session, oldStatus) in changes {
             let isBusy = { (s: SessionStatus) in s == .thinking || s == .working || s == .blocked }
             let newIsBusy = isBusy(session.status)
@@ -181,21 +187,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             switch session.status {
             case .stopped where oldStatus != .stopped:
-                // Session process died
                 startFlash(4, rounds: 2)
                 notify("Claude → 会话结束", body: "「\(session.displayTitle)」已退出", sound: true)
+                shouldExpand = true
 
             case .blocked where session.isActive:
                 startFlash(2, rounds: 4)
                 notify("Claude → 等待确认", body: "「\(session.displayTitle)」需要你的操作")
+                shouldExpand = true
 
             case .error where session.isActive:
                 startFlash(1, rounds: 5)
                 notify("Claude → 出错", body: "「\(session.displayTitle)」")
+                shouldExpand = true
 
             case .idle where oldIsBusy && session.isActive:
                 startFlash(4, rounds: 3)
                 notify("Claude → 完成", body: "「\(session.displayTitle)」", sound: true)
+                shouldExpand = true
 
             case .thinking, .working:
                 guard session.isActive else { continue }
@@ -206,6 +215,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             default: break
             }
+        }
+
+        // Auto-expand collapsed window on important events
+        if shouldExpand {
+            NotificationCenter.default.post(name: .CTLExpandWindow, object: nil)
         }
     }
 }
@@ -219,11 +233,46 @@ struct FloatingWindowView: View {
     var onMenuBarOnly: () -> Void
     @State private var alwaysOnTop = true
     @State private var contentHeight: CGFloat = 120
+    @State private var isCollapsed = false
+    @State private var snapEdge: UnitPoint? = nil  // .leading or .trailing
+
+    private let expandedWidth: CGFloat = 260
+    private let collapsedWidth: CGFloat = 52
+    private let snapThreshold: CGFloat = 40
 
     var body: some View {
+        Group {
+            if isCollapsed {
+                collapsedView
+            } else {
+                expandedView
+            }
+        }
+        .background(
+            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                .overlay(Color.black.opacity(0.08))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: isCollapsed ? 10 : 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: isCollapsed ? 10 : 14)
+                .stroke(Color.white.opacity(isCollapsed ? 0.06 : 0.1), lineWidth: 0.5)
+        )
+        .padding(4)
+        .onAppear {
+            syncWindowLevel()
+            startSnapMonitor()
+        }
+        .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
+        .onReceive(NotificationCenter.default.publisher(for: .CTLExpandWindow)) { _ in
+            if isCollapsed { expand() }
+        }
+    }
+
+    // MARK: - Expanded view
+
+    private var expandedView: some View {
         VStack(spacing: 0) {
             if monitor.filteredSessions.isEmpty {
-                // ── Empty state ──
                 VStack(spacing: 6) {
                     Image(systemName: "circle.dotted")
                         .font(.system(size: 20))
@@ -237,7 +286,6 @@ struct FloatingWindowView: View {
                 }
                 .frame(height: 80)
             } else {
-                // ── Session cards ──
                 ScrollView {
                     LazyVStack(spacing: 6) {
                         ForEach(monitor.filteredSessions) { session in
@@ -250,7 +298,6 @@ struct FloatingWindowView: View {
                 }
             }
 
-            // ── Bottom bar ──
             HStack(spacing: 6) {
                 Button(action: { monitor.refresh() }) {
                     Image(systemName: "arrow.clockwise").font(.system(size: 10))
@@ -273,18 +320,8 @@ struct FloatingWindowView: View {
             }
             .padding(.horizontal, 8).padding(.bottom, 6)
         }
-        .frame(minWidth: 200, maxWidth: 280)
+        .frame(width: expandedWidth)
         .frame(height: contentHeight)
-        .background(
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                .overlay(Color.black.opacity(0.08))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
-        )
-        .padding(4)
         .background(
             GeometryReader { geo in
                 Color.clear.preference(key: ContentHeightKey.self,
@@ -293,22 +330,127 @@ struct FloatingWindowView: View {
         )
         .onPreferenceChange(ContentHeightKey.self) { h in
             contentHeight = h
-            resizeWindow(to: h)
-        }
-        .onAppear { syncWindowLevel() }
-        .onChange(of: alwaysOnTop) { _ in syncWindowLevel() }
-        .onChange(of: monitor.filteredSessions.count) { _ in
-            // Trigger re-measure on session count change
+            resizeWindow(to: h, width: expandedWidth)
         }
     }
 
-    private func resizeWindow(to height: CGFloat) {
+    // MARK: - Collapsed view (just traffic light strip)
+
+    private var collapsedView: some View {
+        VStack(spacing: 6) {
+            // Mini traffic light
+            let s = monitor.activeStatusSummary
+            Circle()
+                .fill(s.hasError ? Color.red : Color.red.opacity(0.12))
+                .frame(width: 12, height: 12)
+                .shadow(color: s.hasError ? .red.opacity(0.7) : .clear, radius: 6)
+            Circle()
+                .fill(s.hasBlocked || s.hasThinking ? Color.yellow : Color.yellow.opacity(0.12))
+                .frame(width: 12, height: 12)
+                .shadow(color: s.hasBlocked || s.hasThinking ? .yellow.opacity(0.7) : .clear, radius: 6)
+            Circle()
+                .fill(s.hasWorking ? Color.green : Color.green.opacity(0.12))
+                .frame(width: 12, height: 12)
+                .shadow(color: s.hasWorking ? .green.opacity(0.7) : .clear, radius: 6)
+
+            // Expand button
+            Button(action: { expand() }) {
+                Image(systemName: "arrowtriangle.forward.fill")
+                    .font(.system(size: 6))
+                    .foregroundColor(.secondary.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 8).padding(.horizontal, 10)
+        .frame(width: collapsedWidth)
+        .frame(height: contentHeight)
+        .onHover { inside in
+            if inside {
+                NSCursor.resizeLeftRight.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .onEnded { _ in expand() }
+        )
+        .onTapGesture(count: 2) { expand() }
+    }
+
+    // MARK: - Snap monitor
+
+    private func startSnapMonitor() {
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            DispatchQueue.main.async { checkSnap() }
+        }
+    }
+
+    private func checkSnap() {
+        guard !isCollapsed, let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
+              let screen = win.screen else { return }
+
+        let frame = win.frame
+        let screenFrame = screen.visibleFrame
+        let leftDist = frame.minX - screenFrame.minX
+        let rightDist = screenFrame.maxX - frame.maxX
+
+        if leftDist < snapThreshold {
+            snapEdge = .leading
+            collapse(to: .leading, screen: screenFrame)
+        } else if rightDist < snapThreshold {
+            snapEdge = .trailing
+            collapse(to: .trailing, screen: screenFrame)
+        }
+    }
+
+    private func collapse(to edge: UnitPoint, screen: CGRect) {
+        isCollapsed = true
+        resizeWindow(to: contentHeight, width: collapsedWidth)
+
         guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
-        let targetH = max(100, min(500, height + 8))
+        var frame = win.frame
+        if edge == .leading {
+            frame.origin.x = screen.minX
+        } else {
+            frame.origin.x = screen.maxX - collapsedWidth - 8
+        }
+        // Center vertically
+        frame.origin.y = screen.midY - frame.height / 2
+        win.setFrame(frame, display: true, animate: true)
+    }
+
+    private func expand() {
+        guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
+              let screen = win.screen else { return }
+
+        isCollapsed = false
+        snapEdge = nil
+        resizeWindow(to: contentHeight, width: expandedWidth)
+
+        var frame = win.frame
+        let screenFrame = screen.visibleFrame
+        // Slide out from the edge
+        if frame.minX < screenFrame.midX {
+            frame.origin.x = screenFrame.minX + 8
+        } else {
+            frame.origin.x = screenFrame.maxX - expandedWidth - 8
+        }
+        frame.origin.y = screenFrame.midY - frame.height / 2
+        win.setFrame(frame, display: true, animate: true)
+    }
+
+    // MARK: - Window resize
+
+    private func resizeWindow(to height: CGFloat, width: CGFloat) {
+        guard let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }) else { return }
+        let targetH = max(60, min(500, height + 8))
         var frame = win.frame
         frame.origin.y += frame.height - targetH
         frame.size.height = targetH
-        win.setFrame(frame, display: true, animate: true)
+        frame.size.width = width
+        win.setFrame(frame, display: true, animate: !isCollapsed)
     }
 
     private func syncWindowLevel() {
