@@ -5,11 +5,9 @@ struct SessionDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
+            // Header row
             HStack(spacing: 8) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 10, height: 10)
+                Circle().fill(statusColor).frame(width: 10, height: 10)
 
                 Text(session.displayTitle)
                     .font(.system(size: 13, weight: .medium))
@@ -19,11 +17,12 @@ struct SessionDetailView: View {
                 Spacer()
 
                 if session.isActive {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
+                    Circle().fill(Color.green).frame(width: 6, height: 6)
+                    Text("live")
+                        .font(.system(size: 9))
+                        .foregroundColor(.white.opacity(0.3))
                 } else {
-                    Text("offline")
+                    Text("ended")
                         .font(.system(size: 9))
                         .foregroundColor(.white.opacity(0.25))
                 }
@@ -51,7 +50,7 @@ struct SessionDetailView: View {
                         .fill(Color.white.opacity(0.06))
                     RoundedRectangle(cornerRadius: 1.5)
                         .fill(statusColor.opacity(0.7))
-                        .frame(width: geo.size.width * progressRatio)
+                        .frame(width: max(3, geo.size.width * progressRatio))
                 }
             }
             .frame(height: 3)

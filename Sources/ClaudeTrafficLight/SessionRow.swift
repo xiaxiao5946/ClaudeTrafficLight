@@ -5,14 +5,15 @@ struct SessionRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             trafficLightStrip
             sessionInfo
             Spacer()
+            pinIndicator
             statusMeta
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
         .background(isSelected ? Color.white.opacity(0.06) : Color.white.opacity(0.02))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
@@ -21,43 +22,28 @@ struct SessionRow: View {
         )
     }
 
-    // MARK: - Sub-views
+    // MARK: - Traffic light strip
 
     private var trafficLightStrip: some View {
-        VStack(spacing: 4) {
-            redBulb
-            yellowBulb
-            greenBulb
+        VStack(spacing: 3) {
+            bulb(isOn: session.status == .error, color: .red)
+            bulb(isOn: session.status == .thinking || session.status == .blocked, color: .yellow)
+            bulb(isOn: session.status == .working || session.status == .idle, color: .green)
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 5)
+        .padding(.vertical, 3)
+        .padding(.horizontal, 4)
         .background(Color(red: 0.05, green: 0.05, blue: 0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var redBulb: some View {
-        let isOn = session.status == .error
-        return Circle()
-            .fill(isOn ? Color.red : Color.red.opacity(0.15))
-            .frame(width: 16, height: 16)
-            .shadow(color: isOn ? .red.opacity(0.5) : .clear, radius: 4)
+    private func bulb(isOn: Bool, color: Color) -> some View {
+        Circle()
+            .fill(isOn ? color : color.opacity(0.15))
+            .frame(width: 10, height: 10)
+            .shadow(color: isOn ? color.opacity(0.5) : .clear, radius: 3)
     }
 
-    private var yellowBulb: some View {
-        let isOn = session.status == .thinking || session.status == .blocked
-        return Circle()
-            .fill(isOn ? Color.yellow : Color.yellow.opacity(0.15))
-            .frame(width: 16, height: 16)
-            .shadow(color: isOn ? .yellow.opacity(0.5) : .clear, radius: 4)
-    }
-
-    private var greenBulb: some View {
-        let isOn = session.status == .working || session.status == .idle
-        return Circle()
-            .fill(isOn ? Color.green : Color.green.opacity(0.15))
-            .frame(width: 16, height: 16)
-            .shadow(color: isOn ? .green.opacity(0.5) : .clear, radius: 4)
-    }
+    // MARK: - Session info
 
     private var sessionInfo: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -66,21 +52,43 @@ struct SessionRow: View {
                 .foregroundColor(.white.opacity(0.9))
                 .lineLimit(1)
 
-            Text(session.currentTask.isEmpty ? "—" : session.currentTask)
+            Text(session.currentTask.isEmpty ? session.status.displayLabel : session.currentTask)
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.4))
                 .lineLimit(1)
         }
     }
 
+    // MARK: - Pin indicator
+
+    private var pinIndicator: some View {
+        Group {
+            if session.pinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(.yellow.opacity(0.7))
+            }
+        }
+    }
+
+    // MARK: - Status meta
+
     private var statusMeta: some View {
         VStack(alignment: .trailing, spacing: 2) {
-            Text(session.status.displayLabel)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(statusColor)
-
+            if session.isActive {
+                HStack(spacing: 2) {
+                    Circle().fill(Color.green).frame(width: 4, height: 4)
+                    Text("live")
+                        .font(.system(size: 9))
+                        .foregroundColor(.green.opacity(0.8))
+                }
+            } else {
+                Text(session.status.displayLabel)
+                    .font(.system(size: 9))
+                    .foregroundColor(statusColor)
+            }
             Text(session.elapsedText)
-                .font(.system(size: 9))
+                .font(.system(size: 8))
                 .foregroundColor(.white.opacity(0.25))
         }
     }

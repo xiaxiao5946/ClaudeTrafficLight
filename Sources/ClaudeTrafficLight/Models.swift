@@ -1,6 +1,6 @@
 import Foundation
 
-enum SessionStatus: String, Codable {
+enum SessionStatus: String, Codable, Equatable {
     case idle
     case thinking
     case working
@@ -19,14 +19,22 @@ enum SessionStatus: String, Codable {
         }
     }
 
-    var lightColor: String {
+    var emoji: String {
         switch self {
-        case .idle: return "green"
-        case .thinking: return "yellow"
-        case .working: return "green"
-        case .blocked: return "yellow"
-        case .error: return "red"
-        case .stopped: return "off"
+        case .idle, .working: return "🟢"
+        case .thinking, .blocked: return "🟡"
+        case .error: return "🔴"
+        case .stopped: return "⚫"
+        }
+    }
+
+    /// Priority for flash alerts (higher = more urgent)
+    var alertPriority: Int {
+        switch self {
+        case .error: return 3
+        case .blocked: return 2
+        case .thinking: return 1
+        default: return 0
         }
     }
 }
@@ -43,6 +51,9 @@ struct SessionInfo: Identifiable, Hashable {
     var updatedAt: Date?
     var projectPath: String // encoded project path for JSONL lookup
     var isActive: Bool      // process still alive
+
+    // Pin state — persisted to disk
+    var pinned: Bool = false
 
     var displayTitle: String {
         if title.isEmpty {
