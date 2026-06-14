@@ -6,6 +6,7 @@ import AppKit
 // ═══════════════════════════════════════════════════════════════════════
 
 let sharedMonitor = SessionMonitor()
+var gAutoExpandEnabled = true  // toggle in popover
 
 extension Notification.Name {
     static let CTLExpandWindow = Notification.Name("CTLExpandWindow")
@@ -242,8 +243,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // Auto-expand collapsed window + specific session on important events
-        if shouldExpand {
+        // Auto-expand on important events (if enabled)
+        if shouldExpand && gAutoExpandEnabled {
             NotificationCenter.default.post(name: .CTLExpandWindow, object: nil,
                                             userInfo: ["sessionId": changes.last?.0.id ?? ""])
         }
@@ -363,7 +364,7 @@ struct FloatingWindowView: View {
     // MARK: - Collapsed view (per-session lights)
 
     private var collapsedView: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 14) {
             if monitor.filteredSessions.isEmpty {
                 CollapsedLight(red: false, yellow: false, green: false, dot: 18)
             } else {
@@ -443,13 +444,30 @@ struct CollapsedLight: View {
     var dot: CGFloat = 8
     var body: some View {
         VStack(spacing: 4) {
-            Circle().fill(red ? Color.red : Color.red.opacity(0.12)).frame(width: dot, height: dot)
-                .shadow(color: red ? .red.opacity(0.6) : .clear, radius: 4)
-            Circle().fill(yellow ? Color.yellow : Color.yellow.opacity(0.12)).frame(width: dot, height: dot)
-                .shadow(color: yellow ? .yellow.opacity(0.6) : .clear, radius: 4)
-            Circle().fill(green ? Color.green : Color.green.opacity(0.12)).frame(width: dot, height: dot)
-                .shadow(color: green ? .green.opacity(0.6) : .clear, radius: 4)
+            BreathingDot(color: .red, active: red, size: dot)
+            BreathingDot(color: .yellow, active: yellow, size: dot)
+            BreathingDot(color: .green, active: green, size: dot)
         }
+    }
+}
+
+// MARK: - Breathing dot
+
+struct BreathingDot: View {
+    let color: Color
+    let active: Bool
+    var size: CGFloat = 18
+    @State private var breathe = false
+
+    var body: some View {
+        Circle()
+            .fill(active ? color : color.opacity(0.12))
+            .frame(width: size, height: size)
+            .shadow(color: active ? color.opacity(0.6) : .clear, radius: size < 12 ? 4 : 8)
+            .scaleEffect(active && breathe ? 1.12 : 1.0)
+            .onAppear { if active { breathe = true } }
+            .onChange(of: active) { if $0 { breathe = true } else { breathe = false } }
+            .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: breathe)
     }
 }
 
@@ -539,18 +557,9 @@ struct GlassSessionCard: View {
         HStack(spacing: 10) {
             // ── Traffic light (always visible, same position) ──
             VStack(spacing: 4) {
-                Circle()
-                    .fill(session.status == .error ? Color.red : Color.red.opacity(0.12))
-                    .frame(width: 18, height: 18)
-                    .shadow(color: session.status == .error ? .red.opacity(0.7) : .clear, radius: 8)
-                Circle()
-                    .fill((session.status == .thinking || session.status == .blocked) ? Color.yellow : Color.yellow.opacity(0.12))
-                    .frame(width: 18, height: 18)
-                    .shadow(color: (session.status == .thinking || session.status == .blocked) ? .yellow.opacity(0.7) : .clear, radius: 8)
-                Circle()
-                    .fill((session.status == .working || session.status == .idle) ? Color.green : Color.green.opacity(0.12))
-                    .frame(width: 18, height: 18)
-                    .shadow(color: (session.status == .working || session.status == .idle) ? .green.opacity(0.7) : .clear, radius: 8)
+                BreathingDot(color: .red, active: session.status == .error, size: 18)
+                BreathingDot(color: .yellow, active: session.status == .thinking || session.status == .blocked, size: 18)
+                BreathingDot(color: .green, active: session.status == .working || session.status == .idle, size: 18)
             }
             .padding(6)
             .background(
