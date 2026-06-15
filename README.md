@@ -8,7 +8,7 @@
 
 ### 🎬 演示
 
-<video src="hello.mp4" controls width="100%" autoplay loop muted></video>
+![](hello.gif)
 
 ---
 
@@ -38,7 +38,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/kikatech/ClaudeTrafficLight.git
+git clone https://github.com/xiaxiao5946/ClaudeTrafficLight.git
 cd ClaudeTrafficLight
 
 # 构建
