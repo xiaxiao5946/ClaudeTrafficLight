@@ -8,6 +8,11 @@ class SessionMonitor: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var selectedSessionId: String?
     @Published var filterMode: FilterMode = .all
+    @Published var notificationsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(notificationsEnabled, forKey: "CTLNotificationsEnabled")
+        }
+    }
     private var dismissedIds: Set<String> = []
     private var justCompletedIds: Set<String> = []  // show until user clicks
 
@@ -25,17 +30,22 @@ class SessionMonitor: ObservableObject {
     private var previousStatuses: [String: SessionStatus] = [:]
 
     var filteredSessions: [SessionInfo] {
-        // Pinned = always shown. Unpinned = only when busy OR just completed (not yet dismissed).
-        let visible = sessions.filter { s in
-            if s.pinned { return true }
-            if justCompletedIds.contains(s.id) { return true }
-            guard s.isActive else { return false }
-            return s.status == .thinking || s.status == .working || s.status == .blocked || s.status == .error
-        }
         switch filterMode {
-        case .all: return visible
-        case .active: return visible.filter { $0.isActive && $0.status != .idle && !justCompletedIds.contains($0.id) }
-        case .pinned: return visible.filter { $0.pinned }
+        case .all:
+            return sessions  // show everything — pinned, active, idle, stopped, all
+        case .active:
+            return sessions.filter { s in
+                guard s.isActive else { return false }
+                return s.status == .thinking || s.status == .working || s.status == .blocked || s.status == .error
+            }
+        case .pinned:
+            // Pinned = always shown. Unpinned = only when busy OR just completed.
+            return sessions.filter { s in
+                if s.pinned { return true }
+                if justCompletedIds.contains(s.id) { return true }
+                guard s.isActive else { return false }
+                return s.status == .thinking || s.status == .working || s.status == .blocked || s.status == .error
+            }
         }
     }
 
@@ -59,6 +69,12 @@ class SessionMonitor: ObservableObject {
     init() {
         claudeDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude")
         configDir = claudeDir.appendingPathComponent("trafficlight")
+        // Load notification preference (default: enabled)
+        if UserDefaults.standard.object(forKey: "CTLNotificationsEnabled") != nil {
+            notificationsEnabled = UserDefaults.standard.bool(forKey: "CTLNotificationsEnabled")
+        } else {
+            notificationsEnabled = true
+        }
         ensureConfigDir()
         loadPinned()
         startPolling()

@@ -93,6 +93,10 @@ struct PopoverView: View {
                             Button(monitor.pinnedIds.contains(session.id) ? "Unpin" : "Pin") {
                                 monitor.togglePin(session.id)
                             }
+                            Button("Copy Session ID") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(session.id, forType: .string)
+                            }
                         }
                     }
                 }
@@ -115,12 +119,22 @@ struct PopoverView: View {
     // MARK: - Bottom bar
 
     private var bottomBar: some View {
-        HStack {
-            Button("Open Window") { onShowFloating() }
+        HStack(spacing: 8) {
+            // Notification toggle
+            Button(action: { monitor.notificationsEnabled.toggle() }) {
+                Image(systemName: monitor.notificationsEnabled ? "bell.fill" : "bell.slash")
+                    .font(.system(size: 10))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(monitor.notificationsEnabled ? .accentColor : .white.opacity(0.25))
+            .help(monitor.notificationsEnabled ? "Notifications on" : "Notifications off")
+
+            Spacer()
+
+            Button("Window") { onShowFloating() }
                 .buttonStyle(.plain)
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.5))
-            Spacer()
             Button("Quit") { NSApplication.shared.terminate(nil) }
                 .buttonStyle(.plain)
                 .font(.system(size: 10))

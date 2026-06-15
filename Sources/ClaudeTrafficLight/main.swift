@@ -135,6 +135,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if NSApp.activationPolicy() == .accessory {
             NSApp.setActivationPolicy(.regular)
         }
+        // First launch → center on main screen
+        let key = "CTLHasLaunched"
+        if !UserDefaults.standard.bool(forKey: key) {
+            floatingWindow?.center()
+            UserDefaults.standard.set(true, forKey: key)
+        }
         floatingWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -186,6 +192,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Session change handler
 
     private func handleSessionChanges(_ changes: [(SessionInfo, SessionStatus)]) {
+        guard sharedMonitor.notificationsEnabled else {
+            // Still flash on status changes, but no notifications
+            for (session, oldStatus) in changes {
+                switch session.status {
+                case .stopped where oldStatus != .stopped:
+                    startFlash(4, rounds: 2)
+                case .blocked where session.isActive:
+                    startFlash(2, rounds: 4)
+                case .error where session.isActive:
+                    startFlash(1, rounds: 5)
+                case .thinking, .working:
+                    guard session.isActive else { continue }
+                    let wasBusy = oldStatus == .thinking || oldStatus == .working || oldStatus == .blocked
+                    if !wasBusy { startFlash(2, rounds: 2) }
+                default: break
+                }
+            }
+            return
+        }
         for (session, oldStatus) in changes {
             let isBusy = { (s: SessionStatus) in s == .thinking || s == .working || s == .blocked }
             let newIsBusy = isBusy(session.status)
