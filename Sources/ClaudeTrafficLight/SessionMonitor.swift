@@ -29,6 +29,18 @@ class SessionMonitor: ObservableObject {
     private let pidCacheTTL: TimeInterval = 10
     private var previousStatuses: [String: SessionStatus] = [:]
 
+    /// Floating window: always compact — pinned, busy, or just-completed only.
+    /// Never shows idle/stopped unpinned sessions.
+    var floatingWindowSessions: [SessionInfo] {
+        sessions.filter { s in
+            if s.pinned { return true }
+            if justCompletedIds.contains(s.id) { return true }
+            guard s.isActive else { return false }
+            return s.status == .thinking || s.status == .working || s.status == .blocked || s.status == .error
+        }
+    }
+
+    /// Popover list: respects the selected filter tab.
     var filteredSessions: [SessionInfo] {
         switch filterMode {
         case .all:

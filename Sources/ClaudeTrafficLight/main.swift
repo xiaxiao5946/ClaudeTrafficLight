@@ -310,14 +310,14 @@ struct FloatingWindowView: View {
 
     private var expandedView: some View {
         VStack(spacing: 0) {
-            if monitor.filteredSessions.isEmpty {
+            if monitor.floatingWindowSessions.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "circle.dotted").font(.system(size: 20)).foregroundColor(.secondary.opacity(0.4))
                     Text("No active sessions").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary.opacity(0.6))
                     Text("Pin a session to always see it here").font(.system(size: 9)).foregroundColor(.secondary.opacity(0.4))
                 }.frame(height: 80)
             } else {
-                let list = monitor.filteredSessions
+                let list = monitor.floatingWindowSessions
                 if list.count <= 4 {
                     VStack(spacing: 6) {
                         ForEach(list) { session in GlassSessionCard(session: session) }
@@ -347,7 +347,7 @@ struct FloatingWindowView: View {
                 if abs(h - contentHeight) > 4 { contentHeight = h; resizeWindow(to: h, width: expandedWidth) }
             }
         })
-        .onChange(of: monitor.filteredSessions.count) { _ in
+        .onChange(of: monitor.floatingWindowSessions.count) { _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { contentHeight = 0 }
         }
     }
@@ -356,10 +356,10 @@ struct FloatingWindowView: View {
 
     private var collapsedView: some View {
         VStack(spacing: 14) {
-            if monitor.filteredSessions.isEmpty {
+            if monitor.floatingWindowSessions.isEmpty {
                 CollapsedLight(red: false, yellow: false, green: false, dot: 18)
             } else {
-                ForEach(monitor.filteredSessions) { session in
+                ForEach(monitor.floatingWindowSessions) { session in
                     CollapsedLight(
                         red: session.status == .error,
                         yellow: session.status == .thinking || session.status == .blocked,
