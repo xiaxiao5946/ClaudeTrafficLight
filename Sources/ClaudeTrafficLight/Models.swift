@@ -41,7 +41,7 @@ enum SessionStatus: String, Codable, Equatable {
 
 struct SessionInfo: Identifiable, Hashable {
     let id: String          // sessionId
-    var title: String       // first user message or cwd
+    var title: String       // first user message
     var status: SessionStatus
     var cwd: String
     var pid: Int?
@@ -51,21 +51,27 @@ struct SessionInfo: Identifiable, Hashable {
     var updatedAt: Date?
     var projectPath: String // encoded project path for JSONL lookup
     var isActive: Bool      // process still alive
+    var sessionTitle: String?  // agent-generated summary title from meta JSON
 
     // Pin state — persisted to disk
     var pinned: Bool = false
 
+    /// Primary title: agent summary > project dir > cwd fallback
     var displayTitle: String {
-        // 1. Project directory name (best)
+        if let s = sessionTitle, !s.isEmpty { return s }
         let proj = projectDir
         if !proj.isEmpty && proj != "/" { return proj }
-
-        // 2. First user message
-        if !title.isEmpty { return String(title.prefix(60)) }
-
-        // 3. cwd fallback
         let url = URL(fileURLWithPath: cwd)
         return url.lastPathComponent
+    }
+
+    /// Subtitle: first user message (empty if same as displayTitle)
+    var subtitle: String {
+        guard !title.isEmpty else { return "" }
+        let t = String(title.prefix(80))
+        if let s = sessionTitle, s == t { return "" }
+        if projectDir == t { return "" }
+        return t
     }
 
     var elapsedText: String {

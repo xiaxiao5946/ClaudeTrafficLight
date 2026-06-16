@@ -9,6 +9,7 @@ let sharedMonitor = SessionMonitor()
 
 extension Notification.Name {
     static let CTLSnapCollapse = Notification.Name("CTLSnapCollapse")
+    static let CTLSnapExpand = Notification.Name("CTLSnapExpand")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -280,6 +281,22 @@ struct FloatingWindowView: View {
             .onReceive(NotificationCenter.default.publisher(for: .CTLSnapCollapse)) { _ in
                 isCollapsed = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: .CTLSnapExpand)) { _ in
+                guard isCollapsed else { return }
+                isCollapsed = false
+                contentHeight = 0  // trigger re-measure
+                if let win = NSApp.windows.first(where: { $0.title == "Claude Traffic Light" }),
+                   let screen = win.screen {
+                    let sf = screen.visibleFrame
+                    var frame = win.frame
+                    // Preserve vertical position, expand width from center
+                    let midX = frame.midX
+                    frame.size.width = expandedWidth
+                    frame.origin.x = max(sf.minX, min(sf.maxX - expandedWidth, midX - expandedWidth / 2))
+                    win.setFrame(frame, display: true, animate: true)
+                    windowLastMoveTime = Date()
+                }
+            }
             .onHover { handleHover($0) }
     }
 
@@ -396,6 +413,18 @@ struct FloatingWindowView: View {
                 guard let win = n.object as? NSWindow,
                       win.title == "Claude Traffic Light" else { return }
                 windowLastMoveTime = Date()
+                // Auto-expand if collapsed window dragged away from edges
+                if win.frame.width < 100, let screen = win.screen {
+                    let sf = screen.visibleFrame
+                    let leftDist = win.frame.minX - sf.minX
+                    let rightDist = sf.maxX - win.frame.maxX
+                    if leftDist > 60 && rightDist > 60 {
+                        // Far from both edges → expand
+                        gHoverInside = true  // prevent immediate re-collapse
+                        gHoverLeaveTime = .distantFuture
+                        NotificationCenter.default.post(name: .CTLSnapExpand, object: nil)
+                    }
+                }
             }
             windowSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
                 DispatchQueue.main.async {
@@ -461,7 +490,8 @@ struct BreathingDot: View {
         Circle()
             .fill(active ? color : color.opacity(0.12))
             .frame(width: size, height: size)
-            .shadow(color: active ? color.opacity(0.6) : .clear, radius: size < 12 ? 4 : 8)
+            .shadow(color: active ? color.opacity(0.9) : .clear, radius: 10)
+            .shadow(color: active ? color.opacity(0.5) : .clear, radius: 20)
             .scaleEffect(active && breathe ? 1.12 : 1.0)
             .onAppear { if active { breathe = true } }
             .onChange(of: active) { if $0 { breathe = true } else { breathe = false } }
@@ -560,16 +590,23 @@ struct GlassSessionCard: View {
                     .fill(Color.primary.opacity(0.06))
             )
 
-            // ── Session name + task ──
+            // ── Session name + first message ──
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.displayTitle)
                     .font(.system(size: 13, weight: .bold))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                if !session.subtitle.isEmpty {
+                    Text(session.subtitle)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.7))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !session.currentTask.isEmpty {
                     Text(session.currentTask)
                         .font(.system(size: 9))
-                        .foregroundColor(.secondary.opacity(0.7))
+                        .foregroundColor(.accentColor.opacity(0.6))
                         .lineLimit(1)
                 }
             }

@@ -245,6 +245,7 @@ class SessionMonitor: ObservableObject {
         let sessionId = json["sessionId"] as? String ?? file.deletingPathExtension().lastPathComponent
         let cwd = json["cwd"] as? String ?? ""
         let statusStr = json["status"] as? String ?? "idle"
+        let sessionTitle = json["title"] as? String
         let startedAt = json["startedAt"] as? Int64 ?? 0
         let updatedAt = json["updatedAt"] as? Int64 ?? 0
 
@@ -286,7 +287,8 @@ class SessionMonitor: ObservableObject {
             currentTask: currentTask, toolCallCount: toolCount,
             startedAt: startedAt > 0 ? Date(ms: startedAt) : nil,
             updatedAt: updatedAt > 0 ? Date(ms: updatedAt) : nil,
-            projectPath: projectPath, isActive: isAlive
+            projectPath: projectPath, isActive: isAlive,
+            sessionTitle: sessionTitle
         )
     }
 
