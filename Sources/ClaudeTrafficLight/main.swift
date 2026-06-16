@@ -413,18 +413,6 @@ struct FloatingWindowView: View {
                 guard let win = n.object as? NSWindow,
                       win.title == "Claude Traffic Light" else { return }
                 windowLastMoveTime = Date()
-                // Auto-expand if collapsed window dragged away from edges
-                if win.frame.width < 100, let screen = win.screen {
-                    let sf = screen.visibleFrame
-                    let leftDist = win.frame.minX - sf.minX
-                    let rightDist = sf.maxX - win.frame.maxX
-                    if leftDist > 60 && rightDist > 60 {
-                        // Far from both edges → expand
-                        gHoverInside = true  // prevent immediate re-collapse
-                        gHoverLeaveTime = .distantFuture
-                        NotificationCenter.default.post(name: .CTLSnapExpand, object: nil)
-                    }
-                }
             }
             windowSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { _ in
                 DispatchQueue.main.async {
@@ -516,13 +504,16 @@ private func checkSnapGlobal() {
     let leftDist = frame.minX - screenFrame.minX
     let rightDist = screenFrame.maxX - frame.maxX
 
-    // Don't snap if window is already very thin (likely collapsed)
-    if frame.width < 100 { return }
-
+    // Always evaluate: snap if near edge, expand if collapsed and far from edges
     if leftDist < 40 && leftDist > -20 {
         snapWindow(to: .leading, win: win, screen: screenFrame)
     } else if rightDist < 40 && rightDist > -20 {
         snapWindow(to: .trailing, win: win, screen: screenFrame)
+    } else if frame.width < 100 && leftDist > 60 && rightDist > 60 {
+        // Collapsed window dropped away from both edges → expand in place
+        gHoverInside = true
+        gHoverLeaveTime = .distantFuture
+        NotificationCenter.default.post(name: .CTLSnapExpand, object: nil)
     }
 }
 
