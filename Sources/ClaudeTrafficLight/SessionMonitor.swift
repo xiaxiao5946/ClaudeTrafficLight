@@ -25,6 +25,7 @@ class SessionMonitor: ObservableObject {
     private var timer: Timer?
     private let claudeDir: URL
     private let configDir: URL
+    private let hookDir: URL
     private var pidCache: [Int: (alive: Bool, checkedAt: Date)] = [:]
     private let pidCacheTTL: TimeInterval = 10
     private var previousStatuses: [String: SessionStatus] = [:]
@@ -81,6 +82,7 @@ class SessionMonitor: ObservableObject {
     init() {
         claudeDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude")
         configDir = claudeDir.appendingPathComponent("trafficlight")
+        hookDir = configDir.appendingPathComponent("hooks")
         // Load notification preference (default: enabled)
         if UserDefaults.standard.object(forKey: "CTLNotificationsEnabled") != nil {
             notificationsEnabled = UserDefaults.standard.bool(forKey: "CTLNotificationsEnabled")
@@ -251,36 +253,25 @@ class SessionMonitor: ObservableObject {
 
         let isAlive = pid > 0 && cachedIsProcessAlive(pid: pid)
         let projectPath = encodePath(cwd)
+        let hookSignal = loadHookStatus(sessionId)
 
         // Determine status: JSONL timestamp-based analysis provides real-time state
-        let (title, jsonlStatus, currentTask, toolCount) = parseJSONL(
+        let (title, jsonlStatus, currentTask, toolCount, jsonlUpdatedAt) = parseJSONL(
             sessionId: sessionId, projectPath: projectPath
         )
 
         // Meta JSON: trust explicit status fields. Only defer to JSONL if absent.
         let hasExplicitStatus = json["status"] != nil
-        let metaStatus: SessionStatus? = {
-            guard hasExplicitStatus else { return nil }
-            switch statusStr {
-            case "busy", "running": return .working
-            case "waiting", "blocked": return .blocked
-            case "idle": return .idle
-            default: return nil
-            }
-        }()
+        let metaStatus = hasExplicitStatus ? SessionStatusDetector.status(forMetaValue: statusStr) : nil
 
-        let status: SessionStatus
-        if !isAlive {
-            status = .stopped
-        } else if let ms = metaStatus {
-            // Meta JSON has explicit status field → trust it (even idle)
-            status = ms
-        } else if jsonlStatus != .idle {
-            // No explicit meta status → fall back to JSONL timestamp
-            status = jsonlStatus
-        } else {
-            status = .idle
-        }
+        let status = SessionStatusDetector.resolve(
+            isAlive: isAlive,
+            hookStatus: hookSignal?.status,
+            hookUpdatedAt: hookSignal?.updatedAt,
+            jsonlStatus: jsonlStatus,
+            jsonlUpdatedAt: jsonlUpdatedAt,
+            metaStatus: metaStatus
+        )
 
         return SessionInfo(
             id: sessionId, title: title, status: status, cwd: cwd, pid: pid,
@@ -294,7 +285,7 @@ class SessionMonitor: ObservableObject {
 
     private func parseProjectJSONL(_ file: URL, projectPath: String) -> SessionInfo? {
         let sessionId = file.deletingPathExtension().lastPathComponent
-        let (title, status, currentTask, toolCount) = parseJSONL(
+        let (title, status, currentTask, toolCount, _) = parseJSONL(
             sessionId: sessionId, projectPath: projectPath, jsonlPath: file
         )
         // Decode cwd from project path
@@ -311,7 +302,13 @@ class SessionMonitor: ObservableObject {
     }
 
     private func parseJSONL(sessionId: String, projectPath: String,
-                             jsonlPath: URL? = nil) -> (title: String, status: SessionStatus, task: String, toolCount: Int) {
+                             jsonlPath: URL? = nil) -> (
+                                title: String,
+                                status: SessionStatus,
+                                task: String,
+                                toolCount: Int,
+                                updatedAt: Date?
+                             ) {
         let path = jsonlPath ?? claudeDir
             .appendingPathComponent("projects")
             .appendingPathComponent(projectPath)
@@ -321,65 +318,37 @@ class SessionMonitor: ObservableObject {
         guard FileManager.default.fileExists(atPath: path.path),
               let data = try? Data(contentsOf: path),
               let content = String(data: data, encoding: .utf8) else {
-            return ("", .idle, "", 0)
+            return ("", .idle, "", 0, nil)
         }
 
         let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
-        guard !lines.isEmpty else { return ("", .idle, "", 0) }
+        guard !lines.isEmpty else { return ("", .idle, "", 0, nil) }
 
         var title = ""
         var toolCount = 0
         var lastToolName = ""
 
-        // Parse last line for real-time status
-        guard let lastLineData = lines.last?.data(using: .utf8),
-              let lastJson = try? JSONSerialization.jsonObject(with: lastLineData) as? [String: Any] else {
-            return ("", .idle, "", 0)
+        // Skip trailing metadata such as turn_duration and snapshots.
+        guard let lastJson = SessionStatusDetector.latestEvent(in: lines) else {
+            return ("", .idle, "", 0, nil)
         }
 
-        let lastType = lastJson["type"] as? String ?? ""
         let lastTimestamp = lastJson["timestamp"] as? String ?? ""
-        let lastStopReason = (lastJson["message"] as? [String: Any])?["stop_reason"] as? String
 
         // Parse ISO timestamp to check recency
-        let isRecent: Bool = {
+        let eventDate: Date? = {
             let fmt = ISO8601DateFormatter()
             fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            guard let date = fmt.date(from: lastTimestamp) ?? {
+            return fmt.date(from: lastTimestamp) ?? {
                 // Try without fractional seconds
                 let f = ISO8601DateFormatter()
                 return f.date(from: lastTimestamp)
-            }() else { return false }
-            return Date().timeIntervalSince(date) < 30  // active within 30s
+            }()
         }()
+        let isRecent = eventDate.map { Date().timeIntervalSince($0) < 30 } ?? false
 
-        // Determine status from last event
-        let status: SessionStatus
-        if lastType == "assistant" {
-            if lastStopReason == "tool_use" {
-                status = .working  // executing tool
-            } else if isRecent {
-                status = .thinking
-            } else {
-                status = .idle
-            }
-        } else if lastType == "user" {
-            // Last event is user → check if it contains a tool_result (model is processing)
-            let content = (lastJson["message"] as? [String: Any])?["content"] as? [[String: Any]]
-            let hasToolResult = content?.contains { $0["type"] as? String == "tool_result" } ?? false
-            if hasToolResult && isRecent {
-                status = .working  // tool just completed, model will respond
-            } else if isRecent {
-                status = .thinking  // user just sent a message
-            } else {
-                status = .idle
-            }
-        } else if lastType == "system" {
-            let subtype = lastJson["subtype"] as? String ?? ""
-            status = subtype.contains("permission") ? .blocked : .idle
-        } else {
-            status = isRecent ? .idle : .idle  // idle by default
-        }
+        // Only the latest structured event determines the current state.
+        let status = SessionStatusDetector.status(for: lastJson, isRecent: isRecent)
 
         // Also scan for title (first user message) and tool counts
         let scanEnd = min(500, lines.count)
@@ -406,7 +375,7 @@ class SessionMonitor: ObservableObject {
         if (status == .thinking || status == .working) && !lastToolName.isEmpty {
             currentTask = lastToolName
         }
-        return (String(title.prefix(60)), status, currentTask, toolCount)
+        return (String(title.prefix(60)), status, currentTask, toolCount, eventDate)
     }
 
     private func extractUserText(_ json: [String: Any]) -> String? {
@@ -422,6 +391,18 @@ class SessionMonitor: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    private func loadHookStatus(_ sessionId: String) -> (status: SessionStatus, updatedAt: Date?)? {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        guard sessionId.unicodeScalars.allSatisfy(allowed.contains),
+              let data = try? Data(contentsOf: hookDir.appendingPathComponent("\(sessionId).json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let raw = json["status"] as? String,
+              let status = SessionStatus(rawValue: raw) else { return nil }
+        let updatedAt = (json["updated_at"] as? NSNumber)
+            .map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+        return (status, updatedAt)
+    }
 
     private func cachedIsProcessAlive(pid: Int) -> Bool {
         if let cached = pidCache[pid], Date().timeIntervalSince(cached.checkedAt) < pidCacheTTL {

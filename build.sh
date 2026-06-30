@@ -5,6 +5,7 @@ cd "$(dirname "$0")"
 
 echo "Building ClaudeTrafficLight (dual mode)..."
 
+mkdir -p build
 rm -f build/ClaudeTrafficLight
 
 # Compile all Swift source files together
@@ -16,6 +17,7 @@ swiftc \
   -framework AppKit \
   -framework Foundation \
   Sources/ClaudeTrafficLight/Models.swift \
+  Sources/ClaudeTrafficLight/SessionStatusDetector.swift \
   Sources/ClaudeTrafficLight/SessionMonitor.swift \
   Sources/ClaudeTrafficLight/TrafficLightIcon.swift \
   Sources/ClaudeTrafficLight/PopoverView.swift \

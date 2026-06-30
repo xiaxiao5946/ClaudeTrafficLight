@@ -15,7 +15,8 @@
 ## ✨ 特性
 
 - **双模式运行** — 悬浮窗口实时一览 + 菜单栏红绿灯图标
-- **⌚ 实时状态监控** — 2 秒轮询，解析会话 JSON + JSONL 尾行时间戳检测 👁️ → 🛠️ → ⏸️ 状态
+- **⌚ 实时状态监控** — Claude Hooks 主动上报，JSON + JSONL 解析作为回退
+- **🔴 错误识别** — 区分 API/工具错误与权限等待，避免文本关键词误报
 - **🔔 强提醒** — 菜单栏图标闪烁 + macOS 系统通知（状态变化、等待确认、出错即时推送）
 - **📌 会话固定** — Pin 住重要会话，完成后保留不消失
 - **🥃 毛玻璃悬浮窗** — HUD 风格半透明窗口，圆角毛玻璃背景，自动适应内容高度
@@ -73,6 +74,15 @@ open build/ClaudeTrafficLight.app
 
 构建产物在 `build/ClaudeTrafficLight.app`，可直接拖入 Applications 文件夹。
 
+### 安装 Claude Hooks（推荐）
+
+```bash
+node Scripts/claude-status-hook.js --install
+```
+
+安装命令会保留现有配置，并更新 `~/.claude/settings.json`。新建或恢复 Claude
+Code 会话时，Hook 会自动启动本应用；未安装 Hook 时仍会使用 JSON 和 JSONL 检测状态。
+
 ---
 
 ## 🎮 使用方式
@@ -124,6 +134,9 @@ else                → ✅ idle
 ## 🔧 模拟测试
 
 ```bash
+# 状态判定 + Hook 安装自检
+bash test.sh
+
 # 启动模拟：创建一个假会话并在 10 秒内经历 忙碌→阻塞→完成
 bash simulate.sh
 ```
