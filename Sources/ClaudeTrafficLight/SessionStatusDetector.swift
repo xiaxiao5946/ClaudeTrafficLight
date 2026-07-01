@@ -49,10 +49,8 @@ enum SessionStatusDetector {
 
     static func status(for event: [String: Any], isRecent: Bool) -> SessionStatus {
         let type = event["type"] as? String ?? ""
-        let hasErrorValue = event["error"].map { !($0 is NSNull) } ?? false
 
-        if event["isApiErrorMessage"] as? Bool == true ||
-            type == "error" || hasErrorValue {
+        if event["isApiErrorMessage"] as? Bool == true || type == "error" {
             return .error
         }
 
@@ -67,7 +65,8 @@ enum SessionStatusDetector {
             let toolResults = content.filter { $0["type"] as? String == "tool_result" }
 
             if let failedResult = toolResults.last(where: { $0["is_error"] as? Bool == true }) {
-                return isPermissionWait(event: event, toolResult: failedResult) ? .blocked : .error
+                if isPermissionWait(event: event, toolResult: failedResult) { return .blocked }
+                if isTerminalToolFailure(failedResult) { return .error }
             }
             if !toolResults.isEmpty && isRecent { return .working }
             return isRecent ? .thinking : .idle
@@ -85,7 +84,6 @@ enum SessionStatusDetector {
         let type = event["type"] as? String ?? ""
         if type == "assistant" || type == "user" || type == "error" { return true }
         if event["isApiErrorMessage"] as? Bool == true { return true }
-        if let error = event["error"], !(error is NSNull) { return true }
 
         let subtype = event["subtype"] as? String ?? ""
         return type == "system" && subtype.contains("permission")
@@ -100,6 +98,15 @@ enum SessionStatusDetector {
             "user doesn't want to proceed",
             "permission for this action was denied",
             "requires explicit user authorization"
+        ]
+        return markers.contains { text.contains($0) }
+    }
+
+    private static func isTerminalToolFailure(_ toolResult: [String: Any]) -> Bool {
+        let text = (toolResult["content"] as? String ?? "").lowercased()
+        let markers = [
+            "permission denied",
+            "operation not permitted"
         ]
         return markers.contains { text.contains($0) }
     }

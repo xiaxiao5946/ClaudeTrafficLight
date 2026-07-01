@@ -20,10 +20,23 @@ const states = {
 const hookEvents = [...Object.keys(states), 'SessionEnd']
 
 function statusFor(event, input) {
-  if (event === 'PostToolUseFailure' && input.is_interrupt === true) return 'idle'
+  if (event === 'PostToolUseFailure') {
+    if (input.is_interrupt === true) return 'idle'
+    if (isPermissionWait(input)) return 'blocked'
+    return null
+  }
   return states[event]
 }
 
+function isPermissionWait(input) {
+  const text = `${input.tool_use_result || ''}\n${input.error || ''}`.toLowerCase()
+  return [
+    "user rejected tool use",
+    "user doesn't want to proceed",
+    "permission for this action was denied",
+    "requires explicit user authorization",
+  ].some(marker => text.includes(marker))
+}
 function install() {
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
   const targetDir = path.join(claudeDir, 'trafficlight')
@@ -77,8 +90,9 @@ if (process.argv[2] === '--self-test') {
     entry.hooks?.some(hook => hook.command.includes('claude-status-hook.js')),
   )
   assert(states.UserPromptSubmit === 'working', 'normal work must stay green')
-  assert(statusFor('PostToolUseFailure', {}) === 'error', 'tool failure must be red')
+  assert(statusFor('PostToolUseFailure', {}) === null, 'generic tool failure must wait for JSONL')
   assert(statusFor('PostToolUseFailure', { is_interrupt: true }) === 'idle', 'user interrupt must not be red')
+  assert(statusFor('PostToolUseFailure', { error: 'Permission for this action was denied' }) === 'blocked', 'permission wait stays yellow')
   assert(states.PermissionRequest === 'blocked', 'permission request must be yellow')
   assert(hookEvents.every(installed), 'all hooks must be installed')
   assert(settings.hooks.SessionStart[0].hooks[0].command === 'echo existing', 'existing hooks must be preserved')

@@ -7,7 +7,8 @@ struct SessionStatusDetectorTests {
     static func main() {
         testAPIErrorIsRed()
         testMetaErrorIsRed()
-        testFailedToolResultIsRed()
+        testTerminalToolFailureIsRed()
+        testRecoverableToolFailuresStayNonRed()
         testPermissionDenialIsYellow()
         testOSPermissionFailureIsRed()
         testStructuredFailureBeatsStaleHook()
@@ -38,10 +39,29 @@ struct SessionStatusDetectorTests {
         expect(SessionStatusDetector.status(forMetaValue: "failed"), .error, "meta failure is red")
     }
 
-    private static func testFailedToolResultIsRed() {
-        let event = toolResultEvent(content: "Exit code 1", isError: true)
+    private static func testTerminalToolFailureIsRed() {
+        let event = toolResultEvent(content: "bash: /root/secret: Permission denied", isError: true)
 
-        expect(SessionStatusDetector.status(for: event, isRecent: true), .error, "failed tool result is red")
+        expect(SessionStatusDetector.status(for: event, isRecent: true), .error, "terminal tool failure is red")
+    }
+
+    private static func testRecoverableToolFailuresStayNonRed() {
+        let oversizedRead = toolResultEvent(
+            content: "File content (51596 tokens) exceeds maximum allowed tokens (25000).",
+            isError: true
+        )
+        let inputValidation = toolResultEvent(
+            content: "<tool_use_error>InputValidationError: missing parameter</tool_use_error>",
+            isError: true
+        )
+        let shellMiss = toolResultEvent(
+            content: "Exit code 1\n(eval):1: no matches found: /tmp/*.json",
+            isError: true
+        )
+
+        expect(SessionStatusDetector.status(for: oversizedRead, isRecent: true), .working, "oversized read is not red")
+        expect(SessionStatusDetector.status(for: inputValidation, isRecent: true), .working, "tool validation error is not red")
+        expect(SessionStatusDetector.status(for: shellMiss, isRecent: true), .working, "recoverable shell miss is not red")
     }
 
     private static func testPermissionDenialIsYellow() {
@@ -140,7 +160,7 @@ struct SessionStatusDetectorTests {
     }
 
     private static func testSuccessfulEventClearsPreviousError() {
-        let failedEvent = toolResultEvent(content: "Exit code 1", isError: true)
+        let failedEvent = toolResultEvent(content: "bash: /root/secret: Permission denied", isError: true)
         let recoveredEvent: [String: Any] = [
             "type": "assistant",
             "message": ["stop_reason": "tool_use"]
